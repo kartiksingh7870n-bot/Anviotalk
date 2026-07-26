@@ -1,0 +1,1430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Anvio Talk – Chat, Stories, Groups & Earn | Download Free App</title>
+    <meta name="description" content="Download Anvio Talk for free. Chat instantly, share stories, create groups, discover profiles, and earn with Creator Mode. 100% secure app for Android, iOS, Windows, and macOS." />
+    <meta name="keywords" content="Anvio Talk, chat app, video calls, story feed, group chat, discover profiles, creator mode, earning app, secure messaging" />
+    <link rel="canonical" href="https://anviotalk.com/download" />
+
+    <!-- Open Graph / Social Media -->
+    <meta property="og:title" content="Anvio Talk – Connect, Create & Earn" />
+    <meta property="og:description" content="Free chat, stories, groups, and creator tools. Download now and join millions of users." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://anviotalk.com/download" />
+    <meta property="og:image" content="https://anviotalk.com/og-image.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="robots" content="index, follow" />
+
+    <!-- Schema.org JSON-LD -->
+    <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@type": "MobileApplication",
+            "name": "Anvio Talk",
+            "description": "Chat, share stories, create groups, discover profiles, and earn with Creator Mode. 100% secure and free.",
+            "applicationCategory": "SocialNetworking",
+            "operatingSystem": "Android, iOS, Windows, macOS",
+            "offers": {
+                "@type": "Offer",
+                "price": "0",
+                "priceCurrency": "USD"
+            },
+            "aggregateRating": {
+                "@type": "AggregateRating",
+                "ratingValue": "4.9",
+                "ratingCount": "12500"
+            }
+        }
+    </script>
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+
+    <style>
+        /* ============================================================
+                   SPLASH / FLASH SCREEN (Opener)
+                   ============================================================ */
+        #splash-screen {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: #000000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            transition: opacity 0.8s ease, visibility 0.8s ease;
+            opacity: 1;
+            visibility: visible;
+        }
+
+        #splash-screen.hide {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        #splash-screen .splash-logo {
+            max-width: 240px;
+            width: 60%;
+            height: auto;
+            animation: splashPulse 1.2s ease-in-out infinite alternate;
+            /* glow removed – no drop-shadow */
+        }
+
+        #splash-screen .splash-text {
+            margin-top: 24px;
+            color: #FFFFFF;
+            font-size: 1.2rem;
+            font-weight: 600;
+            letter-spacing: 2px;
+            opacity: 0.7;
+            font-family: 'Inter', -apple-system, sans-serif;
+        }
+
+        #splash-screen .splash-loader {
+            margin-top: 20px;
+            width: 48px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #splash-screen .splash-loader::after {
+            content: '';
+            position: absolute;
+            left: -50%;
+            top: 0;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, #854C6F, transparent);
+            border-radius: 4px;
+            animation: loaderSlide 1.2s ease-in-out infinite;
+        }
+
+        @keyframes splashPulse {
+            0% {
+                transform: scale(0.95);
+                opacity: 0.8;
+            }
+            100% {
+                transform: scale(1.05);
+                opacity: 1;
+            }
+        }
+
+        @keyframes loaderSlide {
+            0% {
+                left: -50%;
+            }
+            100% {
+                left: 100%;
+            }
+        }
+
+        /* ===== CSS VARIABLES (Light / Dark) ===== */
+        :root {
+            --bg-body: #FBF9F9;
+            --bg-surface: #FFFFFF;
+            --bg-surface-hover: #F0EEEE;
+            --text-primary: #1B1C1C;
+            --text-secondary: #444748;
+            --text-muted: #000000;
+            --border-color: #C4C7C7;
+            --primary: #854C6F;
+            --primary-hover: #6f3d5e;
+            --shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+            --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.06);
+            --radius: 24px;
+            --transition: 0.3s ease;
+        }
+
+        [data-theme="dark"] {
+            --bg-body: #1B1C1C;
+            --bg-surface: #2A2B2B;
+            --bg-surface-hover: #383A3A;
+            --text-primary: #FFFFFF;
+            --text-secondary: #C4C7C7;
+            --text-muted: #999999;
+            --border-color: #444748;
+            --shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.4);
+        }
+
+        /* ===== RESET & BASE ===== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--bg-body);
+            color: var(--text-primary);
+            line-height: 1.6;
+            transition: background-color var(--transition), color var(--transition);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        a {
+            text-decoration: none;
+            color: inherit;
+        }
+
+        /* ===== BUTTONS ===== */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 14px 32px;
+            border-radius: 60px;
+            font-weight: 700;
+            font-size: 1rem;
+            border: none;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            box-shadow: var(--shadow);
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: #FFFFFF;
+            box-shadow: 0 8px 24px rgba(133, 76, 111, 0.3);
+        }
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-3px);
+        }
+
+        .btn-outline {
+            background: transparent;
+            color: var(--text-primary);
+            border: 2px solid var(--border-color);
+        }
+        .btn-outline:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+            transform: translateY(-3px);
+        }
+
+        .btn-download {
+            background: var(--primary);
+            color: #fff;
+            padding: 10px 24px;
+            border-radius: 40px;
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+        .btn-download i {
+            margin-right: 6px;
+        }
+        .btn-download:hover {
+            background: var(--primary-hover);
+            transform: translateY(-2px);
+        }
+
+        /* ===== HEADER ===== */
+        header {
+            padding: 14px 0;
+            background: var(--bg-surface);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            transition: background var(--transition), border var(--transition);
+        }
+
+        .header-inner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 800;
+            font-size: 1.7rem;
+            color: var(--text-primary);
+        }
+        .logo img {
+            height: 40px;
+            width: auto;
+            border-radius: 8px;
+        }
+        .logo span {
+            color: var(--primary);
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 28px;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+        .nav-links a {
+            color: var(--text-secondary);
+            transition: color 0.2s;
+        }
+        .nav-links a:hover {
+            color: var(--primary);
+        }
+        .nav-links .btn-download {
+            font-size: 0.85rem;
+            padding: 8px 20px;
+        }
+
+        .theme-toggle {
+            background: none;
+            border: none;
+            font-size: 1.4rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 40px;
+            transition: background 0.2s;
+        }
+        .theme-toggle:hover {
+            background: var(--bg-surface-hover);
+        }
+
+        .hamburger {
+            display: none;
+            font-size: 1.8rem;
+            cursor: pointer;
+            color: var(--text-primary);
+        }
+
+        /* ===== HERO ===== */
+        .hero {
+            padding: 50px 0 60px;
+            display: flex;
+            align-items: center;
+            gap: 50px;
+            flex-wrap: wrap;
+            background: var(--bg-body);
+            border-bottom: 1px solid var(--border-color);
+            transition: background var(--transition);
+        }
+
+        .hero-content {
+            flex: 1 1 480px;
+        }
+        .hero-content .badge {
+            display: inline-block;
+            background: rgba(133, 76, 111, 0.12);
+            color: var(--primary);
+            font-weight: 700;
+            font-size: 0.75rem;
+            padding: 5px 16px;
+            border-radius: 40px;
+            letter-spacing: 0.3px;
+            margin-bottom: 16px;
+            text-transform: uppercase;
+        }
+        .hero-content h1 {
+            font-size: 3.2rem;
+            font-weight: 800;
+            line-height: 1.12;
+            margin-bottom: 16px;
+            letter-spacing: -0.02em;
+            color: var(--text-primary);
+        }
+        .hero-content h1 span {
+            color: var(--primary);
+        }
+        .hero-content p {
+            font-size: 1.15rem;
+            color: var(--text-secondary);
+            max-width: 480px;
+            margin-bottom: 28px;
+        }
+        .hero-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            margin-bottom: 36px;
+        }
+        .hero-stats {
+            display: flex;
+            gap: 40px;
+            flex-wrap: wrap;
+        }
+        .hero-stats .stat h3 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            color: var(--text-primary);
+        }
+        .hero-stats .stat p {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin: 0;
+        }
+        .counter-highlight {
+            color: var(--primary);
+        }
+
+        .hero-visual {
+            flex: 1 1 400px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        /* Phone mockup */
+        .phone-mockup {
+            width: 100%;
+            max-width: 340px;
+            border-radius: 36px;
+            background: var(--text-primary);
+            padding: 18px 10px 10px;
+            box-shadow: 0 40px 80px rgba(0, 0, 0, 0.15);
+        }
+        .phone-mockup .screen {
+            background: var(--bg-surface);
+            border-radius: 24px;
+            padding: 16px 12px;
+            min-height: 460px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: background var(--transition);
+        }
+        .screen .chat-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .screen .chat-header .avatar {
+            width: 36px;
+            height: 36px;
+            background: var(--primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+        .screen .chat-header .name {
+            font-weight: 700;
+            color: var(--text-primary);
+            font-size: 0.95rem;
+        }
+        .screen .chat-header .status {
+            font-size: 0.65rem;
+            color: var(--text-secondary);
+        }
+        .screen .chat-body {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 4px 0;
+        }
+        .chat-body .msg {
+            padding: 8px 14px;
+            border-radius: 18px;
+            max-width: 80%;
+            font-size: 0.8rem;
+            line-height: 1.4;
+        }
+        .chat-body .msg.received {
+            background: var(--bg-surface-hover);
+            color: var(--text-primary);
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+        .chat-body .msg.sent {
+            background: var(--primary);
+            color: #fff;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+        .chat-body .msg.time {
+            font-size: 0.6rem;
+            color: var(--text-secondary);
+            align-self: flex-end;
+            background: transparent;
+            padding: 2px 6px;
+        }
+        .screen .chat-input {
+            display: flex;
+            gap: 6px;
+            margin-top: 4px;
+        }
+        .screen .chat-input input {
+            flex: 1;
+            padding: 8px 14px;
+            border-radius: 30px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-body);
+            font-size: 0.8rem;
+            outline: none;
+            color: var(--text-primary);
+        }
+        .screen .chat-input input::placeholder {
+            color: var(--text-secondary);
+        }
+        .screen .chat-input button {
+            background: var(--primary);
+            border: none;
+            border-radius: 30px;
+            padding: 0 16px;
+            color: #fff;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .screen .chat-input button:hover {
+            background: var(--primary-hover);
+        }
+
+        /* Floating badges */
+        .float-badge {
+            position: absolute;
+            background: var(--bg-surface);
+            border-radius: 20px;
+            padding: 8px 16px;
+            box-shadow: var(--shadow-lg);
+            font-weight: 600;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            animation: float 4s ease-in-out infinite;
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+        .float-badge i {
+            color: var(--primary);
+        }
+        .float-badge.b1 {
+            top: 5%;
+            right: -8%;
+            animation-delay: 0s;
+        }
+        .float-badge.b2 {
+            bottom: 18%;
+            left: -10%;
+            animation-delay: 1.8s;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-12px); }
+        }
+
+        /* ===== FEATURES ===== */
+        .features {
+            padding: 70px 0;
+            background: var(--bg-body);
+            transition: background var(--transition);
+        }
+        .section-label {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+        .section-label h2 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            color: var(--text-primary);
+        }
+        .section-label h2 span {
+            color: var(--primary);
+        }
+        .section-label p {
+            color: var(--text-secondary);
+            max-width: 540px;
+            margin: 8px auto 0;
+            font-size: 1.05rem;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 28px;
+        }
+        .feature-card {
+            background: var(--bg-surface);
+            border-radius: var(--radius);
+            padding: 28px 20px;
+            text-align: center;
+            transition: all 0.3s ease;
+            border: 1px solid var(--border-color);
+        }
+        .feature-card:hover {
+            transform: translateY(-6px);
+            border-color: var(--primary);
+            box-shadow: var(--shadow-lg);
+        }
+        .feature-card .icon {
+            width: 56px;
+            height: 56px;
+            background: rgba(133, 76, 111, 0.08);
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 14px;
+            font-size: 1.6rem;
+            color: var(--primary);
+        }
+        .feature-card h3 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-bottom: 4px;
+            color: var(--text-primary);
+        }
+        .feature-card p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin: 0;
+        }
+
+        /* ===== TESTIMONIALS (Dynamic Slider) ===== */
+        .testimonials {
+            padding: 60px 0;
+            background: var(--bg-surface);
+            border-top: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border-color);
+            transition: background var(--transition);
+        }
+        .slider-container {
+            max-width: 720px;
+            margin: 0 auto;
+            position: relative;
+            overflow: hidden;
+            border-radius: var(--radius);
+            min-height: 160px;
+        }
+        .slider-track {
+            display: flex;
+            transition: transform 0.6s ease;
+        }
+        .slide {
+            min-width: 100%;
+            padding: 24px 32px;
+            background: var(--bg-body);
+            border-radius: var(--radius);
+            border: 1px solid var(--border-color);
+            text-align: center;
+        }
+        .slide .stars {
+            color: #f5b342;
+            font-size: 1.1rem;
+            letter-spacing: 2px;
+            margin-bottom: 8px;
+        }
+        .slide blockquote {
+            font-size: 1.05rem;
+            font-style: italic;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+        .slide .author {
+            font-weight: 700;
+            color: var(--primary);
+        }
+        .slide .role {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+        .slider-dots {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .slider-dots button {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: none;
+            background: var(--border-color);
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .slider-dots button.active {
+            background: var(--primary);
+        }
+
+        /* ===== DOWNLOAD ===== */
+        .download-section {
+            padding: 70px 0;
+            background: var(--bg-body);
+            transition: background var(--transition);
+        }
+        .download-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
+        }
+        .download-info h2 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            margin-bottom: 12px;
+            color: var(--text-primary);
+        }
+        .download-info h2 span {
+            color: var(--primary);
+        }
+        .download-info p {
+            color: var(--text-secondary);
+            font-size: 1.05rem;
+            margin-bottom: 32px;
+            max-width: 440px;
+        }
+        .download-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+        .download-buttons .btn {
+            padding: 14px 28px;
+            min-width: 140px;
+            background: var(--text-primary);
+            color: var(--bg-surface);
+            border-radius: 40px;
+        }
+        .download-buttons .btn i {
+            font-size: 1.2rem;
+        }
+        .download-buttons .btn:hover {
+            background: var(--primary);
+            transform: translateY(-3px);
+        }
+
+        .qr-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            padding: 32px;
+            background: var(--bg-surface);
+            border-radius: 28px;
+            border: 1px solid var(--border-color);
+            text-align: center;
+            transition: background var(--transition);
+        }
+        .qr-placeholder {
+            width: 150px;
+            height: 150px;
+            background: var(--text-primary);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .qr-placeholder .dot-pattern {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 4px;
+            padding: 10px;
+            width: 100%;
+            height: 100%;
+        }
+        .qr-placeholder .dot-pattern span {
+            background: #fff;
+            border-radius: 2px;
+            opacity: 0.12;
+        }
+        .qr-placeholder .dot-pattern span.active {
+            opacity: 0.6;
+        }
+        .qr-card p {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin: 4px 0 0;
+        }
+        .qr-card .label {
+            font-weight: 700;
+            font-size: 0.95rem;
+            color: var(--text-primary);
+        }
+
+        /* ===== FAQ ===== */
+        .faq-section {
+            padding: 70px 0;
+            background: var(--bg-body);
+            transition: background var(--transition);
+        }
+        .faq-grid {
+            max-width: 720px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .faq-item {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+        .faq-item:hover {
+            border-color: var(--primary);
+        }
+        .faq-question {
+            width: 100%;
+            background: none;
+            border: none;
+            padding: 18px 24px;
+            font-size: 1rem;
+            font-weight: 700;
+            text-align: left;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            font-family: inherit;
+            color: var(--text-primary);
+            transition: background 0.15s;
+        }
+        .faq-question:hover {
+            background: var(--bg-surface-hover);
+        }
+        .faq-question i {
+            color: var(--primary);
+            transition: transform 0.3s;
+        }
+        .faq-item.open .faq-question i {
+            transform: rotate(180deg);
+        }
+        .faq-answer {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.35s ease, padding 0.3s ease;
+            padding: 0 24px;
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+        .faq-item.open .faq-answer {
+            max-height: 200px;
+            padding: 0 24px 24px;
+        }
+
+        /* ===== SOCIAL LINKS (Header & Footer) ===== */
+        .social-links {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .social-links a {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: var(--bg-surface-hover);
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            transition: all 0.25s ease;
+            border: 1px solid transparent;
+        }
+        .social-links a:hover {
+            background: var(--primary);
+            color: #fff;
+            border-color: var(--primary);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(133, 76, 111, 0.25);
+        }
+
+        .footer-social {
+            display: flex;
+            gap: 14px;
+        }
+        .footer-social a {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.06);
+            color: #C4C7C7;
+            font-size: 1.2rem;
+            transition: all 0.25s ease;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .footer-social a:hover {
+            background: var(--primary);
+            color: #fff;
+            border-color: var(--primary);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(133, 76, 111, 0.3);
+        }
+
+        /* ===== FOOTER ===== */
+        footer {
+            background: var(--text-primary);
+            color: var(--text-secondary);
+            padding: 40px 0 24px;
+            transition: background var(--transition);
+        }
+        .footer-inner {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 24px;
+        }
+        .footer-inner .logo {
+            color: #FFFFFF;
+        }
+        .footer-inner .logo img {
+            filter: brightness(0) invert(1);
+        }
+        .footer-links {
+            display: flex;
+            gap: 28px;
+            font-weight: 500;
+        }
+        .footer-links a {
+            transition: color 0.2s;
+        }
+        .footer-links a:hover {
+            color: #FFFFFF;
+        }
+        .footer-bottom {
+            border-top: 1px solid var(--border-color);
+            margin-top: 28px;
+            padding-top: 24px;
+            text-align: center;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+        .live-time {
+            font-weight: 600;
+            color: var(--primary);
+        }
+
+        /* ===== RESPONSIVE ===== */
+        @media (max-width: 992px) {
+            .hero-content h1 { font-size: 2.6rem; }
+            .download-grid { grid-template-columns: 1fr; gap: 40px; }
+            .download-info p { max-width: 100%; }
+            .qr-card { max-width: 300px; margin: 0 auto; }
+        }
+
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+                flex-direction: column;
+                background: var(--bg-surface);
+                position: absolute;
+                top: 70px;
+                left: 0;
+                right: 0;
+                padding: 24px;
+                border-bottom: 1px solid var(--border-color);
+                gap: 16px;
+                box-shadow: var(--shadow-lg);
+            }
+            .nav-links.open { display: flex; }
+            .hamburger { display: block; }
+
+            .hero { padding: 30px 0 40px; }
+            .hero-content h1 { font-size: 2.2rem; }
+            .hero-content p { font-size: 1rem; }
+            .hero-stats { gap: 20px; }
+            .hero-visual .phone-mockup { max-width: 260px; }
+            .float-badge { display: none; }
+            .section-label h2 { font-size: 2rem; }
+            .download-buttons .btn { min-width: 100%; }
+            .footer-inner { flex-direction: column; text-align: center; }
+            .social-links { margin-top: 8px; }
+
+            #splash-screen .splash-logo {
+                max-width: 160px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .hero-content h1 { font-size: 1.8rem; }
+            .hero-buttons .btn { width: 100%; }
+            .features-grid { grid-template-columns: 1fr; }
+            .slider-track .slide { padding: 16px; }
+
+            #splash-screen .splash-logo {
+                max-width: 120px;
+            }
+            #splash-screen .splash-text {
+                font-size: 0.95rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ============================================================
+    SPLASH / FLASH SCREEN (Opener)
+    ============================================================ -->
+    <div id="splash-screen" role="presentation">
+        <img
+        src="https://res.cloudinary.com/dpvpnwhm4/image/upload/v1785045725/Anvio_Talk_logo_ofe2a0.png"
+        alt="Anvio Talk"
+        class="splash-logo"
+        />
+        <div class="splash-text">Anvio Talk</div>
+        <div class="splash-loader"></div>
+    </div>
+
+    <!-- ===== HEADER ===== -->
+    <header>
+        <div class="container header-inner">
+            <a href="#" class="logo">
+                <img
+                src="https://res.cloudinary.com/dpvpnwhm4/image/upload/v1785045725/Anvio_Talk_logo_ofe2a0.png"
+                alt="Anvio Talk"
+                style="height:40px; width:auto; border-radius:8px;"
+                />
+                Anvio<span>Talk</span>
+            </a>
+            <nav class="nav-links" id="navLinks">
+                <a href="#features">Features</a>
+                <a href="#testimonials">Reviews</a>
+                <a href="#download">Download</a>
+                <a href="#faq">FAQ</a>
+                <a href="#" class="btn-download"><i class="fas fa-download"></i> Get App</a>
+            </nav>
+            <div class="social-links">
+                <a href="https://www.instagram.com/anviotalk/" target="_blank" rel="noopener noreferrer" aria-label="Instagram"><i class="fab fa-instagram"></i></a>
+                <a href="https://www.facebook.com/profile.php?id=61592235656268" target="_blank" rel="noopener noreferrer" aria-label="Facebook"><i class="fab fa-facebook-f"></i></a>
+                <a href="https://www.youtube.com/@Anviotalk" target="_blank" rel="noopener noreferrer" aria-label="YouTube"><i class="fab fa-youtube"></i></a>
+                <a href="https://www.linkedin.com/in/anviotalk/" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn"><i class="fab fa-linkedin-in"></i></a>
+            </div>
+            <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+                <i class="fas fa-moon"></i>
+            </button>
+            <div class="hamburger" id="hamburger" aria-label="Menu">
+                <i class="fas fa-bars"></i>
+            </div>
+        </div>
+    </header>
+
+    <!-- ===== HERO ===== -->
+    <section class="hero container" id="home">
+        <div class="hero-content">
+            <div class="badge"><i class="fas fa-shield-alt" style="margin-right:6px;"></i> 100% Secure · Genuine Users</div>
+            <h1>Connect, Create &amp; <span>Earn</span> with Anvio Talk</h1>
+            <p>
+                Chat, share stories, discover profiles, build groups, and unlock your creator potential.
+                Free, secure, and built for everyone.
+            </p>
+            <div class="hero-buttons">
+                <a href="#download" class="btn btn-primary"><i class="fas fa-download"></i> Download Now</a>
+                <a href="#features" class="btn btn-outline"><i class="fas fa-play"></i> Explore</a>
+            </div>
+            <div class="hero-stats">
+                <div class="stat">
+                    <h3><span class="counter-highlight" id="userCounter">2,847,921</span>+</h3>
+                    <p>Active Users</p>
+                </div>
+                <div class="stat">
+                    <h3>4.9★</h3>
+                    <p>Rating</p>
+                </div>
+                <div class="stat">
+                    <h3>100+</h3>
+                    <p>Countries</p>
+                </div>
+            </div>
+        </div>
+        <div class="hero-visual">
+            <div class="phone-mockup">
+                <div class="screen">
+                    <div class="chat-header">
+                        <div class="avatar">A</div>
+                        <div>
+                            <div class="name">Anvi Sharma</div>
+                            <div class="status">● Online · Creator</div>
+                        </div>
+                    </div>
+                    <div class="chat-body">
+                        <div class="msg received">Hey! Loved your latest story 👏</div>
+                        <div class="msg sent">Thanks! Means a lot 🙌</div>
+                        <div class="msg received">Can we plan a group collab?</div>
+                        <div class="msg sent">Sure! Let's discuss in the group.</div>
+                        <div class="msg time">Today 5:12 PM</div>
+                    </div>
+                    <div class="chat-input">
+                        <input type="text" placeholder="Type a message..." />
+                        <button><i class="fas fa-paper-plane"></i></button>
+                    </div>
+                </div>
+            </div>
+            <div class="float-badge b1"><i class="fas fa-coins"></i> Earn rewards</div>
+            <div class="float-badge b2"><i class="fas fa-user-plus"></i> Discover creators</div>
+        </div>
+    </section>
+
+    <!-- ===== FEATURES ===== -->
+    <section class="features" id="features">
+        <div class="container">
+            <div class="section-label">
+                <h2>Everything you need <span>in one app</span></h2>
+                <p>Chat, create, earn, and connect — all with complete security and a smooth experience.</p>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="icon"><i class="fas fa-comments"></i></div>
+                    <h3>Instant Chat</h3>
+                    <p>Real‑time messaging with read receipts, typing indicators, and reactions.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon"><i class="fas fa-film"></i></div>
+                    <h3>Story Feed</h3>
+                    <p>Share moments with photos &amp; videos. See what your friends and creators are up to.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon"><i class="fas fa-users"></i></div>
+                    <h3>Groups</h3>
+                    <p>Create and manage groups with up to 500 members. Perfect for communities.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon"><i class="fas fa-compass"></i></div>
+                    <h3>Profile Discover</h3>
+                    <p>Explore new profiles, follow creators, and grow your network.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon"><i class="fas fa-star"></i></div>
+                    <h3>Creator Mode</h3>
+                    <p>Unlock exclusive tools for content creators – analytics, badges, and more.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon"><i class="fas fa-wallet"></i></div>
+                    <h3>Earning</h3>
+                    <p>Monetize your content, receive tips, and earn through brand collaborations.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon"><i class="fas fa-lock"></i></div>
+                    <h3>100% Secure</h3>
+                    <p>End‑to‑end encryption, verified users, and strict privacy controls.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon"><i class="fas fa-phone-alt"></i></div>
+                    <h3>Voice &amp; Video</h3>
+                    <p>High‑quality voice and video calls with crystal‑clear audio and HD video.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== TESTIMONIALS ===== -->
+    <section class="testimonials" id="testimonials">
+        <div class="container">
+            <div class="section-label">
+                <h2>What our <span>users</span> say</h2>
+                <p>Real reviews from real people who use Anvio Talk every day.</p>
+            </div>
+            <div class="slider-container">
+                <div class="slider-track" id="sliderTrack">
+                    <div class="slide">
+                        <div class="stars"><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i></div>
+                        <blockquote>"Anvio Talk has completely changed how I connect with my audience. The Creator Mode and earning features are game-changers."</blockquote>
+                        <div class="author">— Priya Mehta</div>
+                        <div class="role">Content Creator</div>
+                    </div>
+                    <div class="slide">
+                        <div class="stars"><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i></div>
+                        <blockquote>"The story feed and group features are fantastic. I've never seen such a smooth and secure app. Highly recommended!"</blockquote>
+                        <div class="author">— Arjun Singh</div>
+                        <div class="role">Community Manager</div>
+                    </div>
+                    <div class="slide">
+                        <div class="stars"><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star-half-alt"></i></div>
+                        <blockquote>"Discovering new creators and earning rewards is so easy. The interface is clean and works perfectly on all my devices."</blockquote>
+                        <div class="author">— Sneha Reddy</div>
+                        <div class="role">Digital Artist</div>
+                    </div>
+                </div>
+                <div class="slider-dots" id="sliderDots">
+                    <button class="active" data-index="0"></button>
+                    <button data-index="1"></button>
+                    <button data-index="2"></button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== DOWNLOAD ===== -->
+    <section class="download-section" id="download">
+        <div class="container">
+            <div class="download-grid">
+                <div class="download-info">
+                    <h2>Get <span>Anvio Talk</span> <br />on your device</h2>
+                    <p>
+                        Available for Android, iOS, Windows, and macOS. Free, secure, and ready to
+                        help you connect, create, and earn.
+                    </p>
+                    <div class="download-buttons">
+                        <a href="#" class="btn"><i class="fab fa-apple"></i> App Store</a>
+                        <a href="#" class="btn"><i class="fab fa-google-play"></i> Google Play</a>
+                        <a href="#" class="btn"><i class="fab fa-windows"></i> Windows</a>
+                        <a href="#" class="btn"><i class="fab fa-apple"></i> macOS</a>
+                    </div>
+                </div>
+                <div class="qr-card">
+                    <div class="qr-placeholder">
+                        <div class="dot-pattern">
+                            <span></span><span class="active"></span><span></span><span class="active"></span><span></span><span></span><span class="active"></span><span></span>
+                            <span class="active"></span><span></span><span class="active"></span><span></span><span></span><span class="active"></span><span></span><span class="active"></span>
+                            <span></span><span class="active"></span><span></span><span></span><span class="active"></span><span></span><span class="active"></span><span></span>
+                            <span class="active"></span><span></span><span></span><span class="active"></span><span></span><span class="active"></span><span></span><span></span>
+                            <span></span><span></span><span class="active"></span><span></span><span class="active"></span><span></span><span></span><span class="active"></span>
+                            <span class="active"></span><span></span><span></span><span></span><span></span><span class="active"></span><span class="active"></span><span></span>
+                            <span></span><span class="active"></span><span></span><span class="active"></span><span></span><span></span><span></span><span class="active"></span>
+                            <span class="active"></span><span></span><span class="active"></span><span></span><span class="active"></span><span></span><span class="active"></span><span></span>
+                        </div>
+                    </div>
+                    <p class="label">Scan to download</p>
+                    <p>Point your camera at the QR code</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== FAQ ===== -->
+    <section class="faq-section" id="faq">
+        <div class="container">
+            <div class="section-label">
+                <h2>Frequently Asked <span>Questions</span></h2>
+                <p>Quick answers to what users usually ask about Anvio Talk.</p>
+            </div>
+            <div class="faq-grid">
+                <div class="faq-item open">
+                    <button class="faq-question">
+                        Is Anvio Talk really free and secure?
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                    <div class="faq-answer">
+                        Yes! Anvio Talk is completely free. All messages and calls are end‑to‑end encrypted, and we verify every user to keep the community genuine and safe.
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <button class="faq-question">
+                        How does the Creator Mode and earning work?
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                    <div class="faq-answer">
+                        Creator Mode gives you access to analytics, profile badges, and monetization tools. You can earn through tips, sponsored content, and brand collaborations directly within the app.
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <button class="faq-question">
+                        Can I discover and follow new people?
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                    <div class="faq-answer">
+                        Absolutely. The Discover feature helps you find new profiles based on your interests. You can follow creators, join public groups, and expand your network.
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <button class="faq-question">
+                        What platforms are supported?
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                    <div class="faq-answer">
+                        Anvio Talk is available for Android (6.0+), iOS (14+), Windows (10+), and macOS (11+). A web version is also in development.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <a href="#" class="logo">
+                    <img
+                    src="https://res.cloudinary.com/dpvpnwhm4/image/upload/v1785045725/Anvio_Talk_logo_ofe2a0.png"
+                    alt="Anvio Talk"
+                    style="height:36px; width:auto; border-radius:6px; filter:brightness(0) invert(1);"
+                    />
+                    Anvio<span>Talk</span>
+                </a>
+                <div class="footer-links">
+                    <a href="#features">Features</a>
+                    <a href="#testimonials">Reviews</a>
+                    <a href="#download">Download</a>
+                    <a href="#faq">FAQ</a>
+                    <a href="#">Privacy</a>
+                </div>
+                <div class="footer-social">
+                    <a href="https://www.instagram.com/anviotalk/" target="_blank" rel="noopener noreferrer" aria-label="Instagram"><i class="fab fa-instagram"></i></a>
+                    <a href="https://www.facebook.com/profile.php?id=61592235656268" target="_blank" rel="noopener noreferrer" aria-label="Facebook"><i class="fab fa-facebook-f"></i></a>
+                    <a href="https://www.youtube.com/@Anviotalk" target="_blank" rel="noopener noreferrer" aria-label="YouTube"><i class="fab fa-youtube"></i></a>
+                    <a href="https://www.linkedin.com/in/anviotalk/" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn"><i class="fab fa-linkedin-in"></i></a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                &copy; <span id="currentYear">2026</span> Anvio Talk. All rights reserved.
+                <span class="live-time" id="liveTime">🕒 Loading...</span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- ===== JAVASCRIPT ===== -->
+    <script>
+        (function() {
+            'use strict';
+
+            // --- 0. SPLASH SCREEN ---
+            const splash = document.getElementById('splash-screen');
+            setTimeout(() => {
+                splash.classList.add('hide');
+                setTimeout(() => {
+                    splash.style.display = 'none';
+                }, 800);
+            }, 2500);
+
+            // --- 1. Hamburger ---
+            const hamburger = document.getElementById('hamburger');
+            const navLinks = document.getElementById('navLinks');
+            hamburger.addEventListener('click', () => navLinks.classList.toggle('open'));
+            document.querySelectorAll('.nav-links a').forEach(link => {
+                link.addEventListener('click', () => navLinks.classList.remove('open'));
+            });
+
+            // --- 2. FAQ Accordion ---
+            const faqItems = document.querySelectorAll('.faq-item');
+            faqItems.forEach(item => {
+                const question = item.querySelector('.faq-question');
+                question.addEventListener('click', () => {
+                    faqItems.forEach(other => {
+                        if (other !== item && other.classList.contains('open')) {
+                            other.classList.remove('open');
+                        }
+                    });
+                    item.classList.toggle('open');
+                });
+            });
+
+            // --- 3. Smooth Scroll ---
+            document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+                anchor.addEventListener('click', function(e) {
+                    const target = document.querySelector(this.getAttribute('href'));
+                    if (target) {
+                        e.preventDefault();
+                        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                });
+            });
+
+            // --- 4. Dynamic User Counter ---
+            let counterValue = 2847921;
+            const counterEl = document.getElementById('userCounter');
+            setInterval(() => {
+                const increment = Math.floor(Math.random() * 15) + 5;
+                counterValue += increment;
+                counterEl.textContent = counterValue.toLocaleString();
+            }, 4000);
+
+            // --- 5. Testimonial Slider ---
+            const track = document.getElementById('sliderTrack');
+            const dots = document.querySelectorAll('#sliderDots button');
+            let currentIndex = 0;
+            let slideInterval;
+
+            function goToSlide(index) {
+                if (index < 0) index = 0;
+                if (index >= dots.length) index = dots.length - 1;
+                currentIndex = index;
+                track.style.transform = `translateX(-${currentIndex * 100}%)`;
+                dots.forEach((dot, i) => {
+                    dot.classList.toggle('active', i === currentIndex);
+                });
+            }
+
+            function nextSlide() {
+                goToSlide((currentIndex + 1) % dots.length);
+            }
+
+            function startSlider() {
+                if (slideInterval) clearInterval(slideInterval);
+                slideInterval = setInterval(nextSlide, 5000);
+            }
+
+            dots.forEach((dot, index) => {
+                dot.addEventListener('click', () => {
+                    goToSlide(index);
+                    startSlider();
+                });
+            });
+
+            goToSlide(0);
+            startSlider();
+
+            // --- 6. Dark / Light Mode Toggle ---
+            const themeToggle = document.getElementById('themeToggle');
+            const icon = themeToggle.querySelector('i');
+            const currentTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', currentTheme);
+            if (currentTheme === 'dark') {
+                icon.classList.remove('fa-moon');
+                icon.classList.add('fa-sun');
+            }
+
+            themeToggle.addEventListener('click', () => {
+                const current = document.documentElement.getAttribute('data-theme');
+                const newTheme = current === 'light' ? 'dark' : 'light';
+                document.documentElement.setAttribute('data-theme', newTheme);
+                localStorage.setItem('theme', newTheme);
+                if (newTheme === 'dark') {
+                    icon.classList.remove('fa-moon');
+                    icon.classList.add('fa-sun');
+                } else {
+                    icon.classList.remove('fa-sun');
+                    icon.classList.add('fa-moon');
+                }
+            });
+
+            // --- 7. Live Date & Time ---
+            const yearEl = document.getElementById('currentYear');
+            yearEl.textContent = new Date().getFullYear();
+
+            const timeEl = document.getElementById('liveTime');
+            function updateClock() {
+                const now = new Date();
+                const hours = String(now.getHours()).padStart(2, '0');
+                const mins = String(now.getMinutes()).padStart(2, '0');
+                const secs = String(now.getSeconds()).padStart(2, '0');
+                timeEl.textContent = `🕒 ${hours}:${mins}:${secs} IST`;
+            }
+            updateClock();
+            setInterval(updateClock, 1000);
+
+            console.log('🚀 Anvio Talk — Splash (glow removed), social links, dynamic & SEO-ready!');
+        })();
+    </script>
+
+</body>
+</html>
