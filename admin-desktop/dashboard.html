@@ -499,8 +499,19 @@
 
 <script>
 // ============ CONFIG ============
-// Electron (file://) par localhost server; website (https://anviotalk.in/admin) par same-origin.
-const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:3000' : '';
+// API base resolution:
+//   1. Electron (file://)  -> localhost:3000 server
+//   2. Web + override      -> ?api=https://api.anviotalk.in  (ya localStorage AT_ADMIN_API)
+//   3. Web (default)       -> same-origin
+const API_BASE = (() => {
+  if (window.location.protocol === 'file:') return 'http://localhost:3000';
+  const override = new URLSearchParams(window.location.search).get('api') || localStorage.getItem('AT_ADMIN_API');
+  if (override) {
+    localStorage.setItem('AT_ADMIN_API', override.replace(/\/+$/, ''));
+    return override.replace(/\/+$/, '');
+  }
+  return '';
+})();
 
 firebase.initializeApp({
   apiKey: "AIzaSyBR9e8eLDsyr5cHhwkcanRTbPqqjfGBBHU",
