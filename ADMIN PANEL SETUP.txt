@@ -1,0 +1,62 @@
+================================================================
+  ADMIN PANEL SETUP (ek baar karna hai — 2 minute)
+================================================================
+
+Admin Panel v2 me security bahut tight hai:
+  - Alag admin login (app ke users se bilkul alag)
+  - Google Authenticator 2FA (mandatory)
+  - 30 minute idle hone par auto-logout
+  - Har action ka audit record
+
+Lekin admin panel ka DATA (users, reports, payouts) Firestore se
+aata hai. Uske liye EK BAAR service-account file chahiye hogi.
+Bina iske login hoga par data load nahi hoga (empty lists).
+
+----------------------------------------------------------------
+STEP 1 — Service account file download karo (2 minute)
+----------------------------------------------------------------
+
+1. Browser me kholo:
+   https://console.firebase.google.com/project/anvio-talk/settings/serviceaccounts/adminsdk
+
+2. "Generate new private key" button dabao
+   → ek JSON file download hogi (lamba naam hoga)
+
+3. Download hui file ko RENAME karo:  service-account.json
+
+4. Us file ko APNE PROJECT FOLDER me daal do
+   (wahi folder jahan start-admin.bat hai)
+
+Bas! Ab start-admin.bat chalao — server khud file utha lega.
+
+----------------------------------------------------------------
+STEP 2 — Admin Panel kholo (roz ka tareeka)
+----------------------------------------------------------------
+
+1. start-admin.bat double-click karo
+2. Login window:
+   - Email:    kartiksingh7870n@gmail.com
+   - Password: (wahi jo app me use karte ho)
+3. PEHLI BAAR: Google Authenticator QR scan karne ko bolega
+   - Phone me Google Authenticator app kholo (free, Play Store)
+   - + → Scan a QR code → QR scan karo
+   - App ka 6-digit code window me daalo → setup complete
+4. Aage se login = email + password + 6-digit code (30 sec ka kaam)
+
+----------------------------------------------------------------
+KYA KARNA HAI AGAR DATA KHAALI DIKHE?
+----------------------------------------------------------------
+
+→ service-account.json folder me nahi hai. Upar STEP 1 karo.
+
+KYA KARNA HAI AGAR 2FA PHONE KHO GAYA?
+→ Firebase console → Firestore → admin_users collection → apna
+  document kholo → totpSecret aur totpEnabled fields DELETE karo.
+  (Yeh manual reset audit log me record karna zaroori hai —
+  server chala kar admin panel se reset karo to automatic hai.)
+
+NAI ADMIN KO ADD KARNA HAI?
+→ Admin Panel → Admins & Config tab → Invite New Admin
+  (sirf SUPER_ADMIN hi kar sakta hai)
+
+================================================================

@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Anvio Talk — Admin Console</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<style>
+  :root {
+    --bg: #f1f5f9; --card: #ffffff; --border: #e2e8f0;
+    --dark: #0f172a; --dark2: #1e293b; --accent: #10b981; --accent2: #34d399;
+    --red: #ef4444; --amber: #f59e0b; --blue: #3b82f6; --purple: #8b5cf6;
+    --text: #0f172a; --muted: #64748b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+  body { background: var(--bg); color: var(--text); }
+  button { cursor: pointer; border: none; font-family: inherit; }
+
+  /* ============ LOGIN ============ */
+  #loginScreen {
+    position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  }
+  .login-card { background: #fff; border-radius: 20px; padding: 40px 36px; width: 400px; max-width: 94vw; text-align: center; box-shadow: 0 25px 60px rgba(0,0,0,.4); }
+  .login-logo { width: 64px; height: 64px; border-radius: 18px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; margin: 0 auto 18px; font-size: 30px; }
+  .login-card h1 { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
+  .login-card p.sub { font-size: 12px; color: var(--muted); margin-bottom: 24px; }
+  .login-card input {
+    width: 100%; padding: 13px 16px; border: 1.5px solid var(--border); border-radius: 12px;
+    font-size: 14px; margin-bottom: 12px; outline: none; transition: border .2s;
+  }
+  .login-card input:focus { border-color: var(--accent); }
+  .btn-primary { width: 100%; padding: 13px; background: var(--accent); color: #fff; border-radius: 12px; font-size: 14px; font-weight: 700; transition: opacity .2s; }
+  .btn-primary:hover { opacity: .92; }
+  .btn-primary:disabled { opacity: .6; cursor: not-allowed; }
+  #loginError { color: var(--red); font-size: 12px; margin-top: 12px; min-height: 16px; font-weight: 600; }
+  .login-note { margin-top: 18px; font-size: 10.5px; color: #94a3b8; line-height: 1.5; }
+  #serverStatus { font-size: 11px; margin-top: 10px; font-weight: 700; }
+  #serverStatus.ok { color: var(--accent); } #serverStatus.down { color: var(--red); }
+  .step-tag { display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--accent); background: #d1fae5; border-radius: 20px; padding: 4px 12px; margin-bottom: 14px; }
+
+  /* 2FA step */
+  #twoFaStep { display: none; }
+  .qr-box { background: #f8fafc; border: 1.5px dashed var(--border); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+  .qr-box img { width: 190px; height: 190px; display: block; margin: 0 auto; border-radius: 8px; background: #fff; }
+  .qr-box .qr-hint { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+  .secret-text { font-family: monospace; font-size: 11px; word-break: break-all; background: #0f172a; color: #a5f3fc; padding: 8px 10px; border-radius: 8px; margin-top: 6px; }
+  #totpCode { letter-spacing: 8px; font-size: 22px; text-align: center; font-weight: 800; }
+  .link-btn { background: none; color: #64748b; font-size: 11.5px; font-weight: 600; margin-top: 12px; text-decoration: underline; }
+  .back-link { background:none; border:none; color:#94a3b8; font-size:11px; font-weight:700; margin-top:14px; cursor:pointer; }
+
+  /* ============ SHELL ============ */
+  #app { display: none; height: 100vh; }
+  #app.active { display: flex; }
+
+  .sidebar {
+    width: 232px; background: var(--dark); color: #cbd5e1; flex-shrink: 0;
+    display: flex; flex-direction: column; overflow-y: auto;
+  }
+  .sidebar-brand { padding: 22px 20px; border-bottom: 1px solid #1e293b; }
+  .sidebar-brand .name { font-size: 15px; font-weight: 800; color: #fff; }
+  .sidebar-brand .tag { font-size: 10px; color: var(--accent2); font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .nav-section { font-size: 9.5px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: #475569; padding: 14px 20px 4px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 12px; padding: 11px 20px; font-size: 13px;
+    cursor: pointer; border-left: 3px solid transparent; transition: all .15s; color: #94a3b8;
+  }
+  .nav-item:hover { background: #1e293b; color: #fff; }
+  .nav-item.active { background: #1e293b; border-left-color: var(--accent); color: #fff; font-weight: 600; }
+  .nav-item .ico { width: 18px; text-align: center; }
+  .nav-badge { margin-left: auto; background: var(--red); color: #fff; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 20px; }
+  .sidebar-footer { margin-top: auto; padding: 16px 20px; border-top: 1px solid #1e293b; font-size: 11px; }
+  .sidebar-footer .admin-name { color: #fff; font-weight: 700; font-size: 12px; margin-bottom: 2px; word-break: break-all; }
+  .sidebar-footer .admin-role { color: var(--accent2); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+  .sidebar-footer .idle-hint { color:#475569; font-size:9.5px; margin-top:6px; }
+  .btn-logout { margin-top: 10px; width: 100%; padding: 8px; background: #1e293b; color: #f87171; border-radius: 8px; font-size: 11px; font-weight: 700; }
+  .btn-logout:hover { background: #dc2626; color: #fff; }
+
+  .main { flex: 1; overflow-y: auto; padding: 26px 30px; }
+  .page { display: none; } .page.active { display: block; }
+  .page-title { font-size: 22px; font-weight: 800; margin-bottom: 4px; }
+  .page-sub { font-size: 12.5px; color: var(--muted); margin-bottom: 22px; }
+
+  /* Cards */
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; }
+  .stat-card .label { font-size: 10.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; }
+  .stat-card .value { font-size: 26px; font-weight: 800; margin-top: 6px; }
+  .stat-card .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .stat-card.green .value { color: var(--accent); } .stat-card.red .value { color: var(--red); }
+  .stat-card.amber .value { color: var(--amber); } .stat-card.blue .value { color: var(--blue); }
+  .stat-card.purple .value { color: var(--purple); }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+  .card-head { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .card-head h3 { font-size: 14px; font-weight: 700; }
+  .card-body { padding: 16px 20px; max-height: 65vh; overflow-y: auto; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .toolbar input[type=text], .toolbar input[type=number], .toolbar select, .toolbar textarea {
+    padding: 9px 14px; border: 1.5px solid var(--border); border-radius: 10px; font-size: 12.5px; outline: none;
+  }
+  .toolbar input:focus, .toolbar select:focus, .toolbar textarea:focus { border-color: var(--accent); }
+  .btn { padding: 9px 16px; border-radius: 10px; font-size: 12px; font-weight: 700; transition: all .15s; }
+  .btn-green { background: var(--accent); color: #fff; } .btn-green:hover { opacity: .9; }
+  .btn-red { background: #fee2e2; color: var(--red); } .btn-red:hover { background: var(--red); color: #fff; }
+  .btn-amber { background: #fef3c7; color: #b45309; } .btn-amber:hover { background: var(--amber); color: #fff; }
+  .btn-dark { background: #1e293b; color: #fff; } .btn-dark:hover { opacity: .85; }
+  .btn-blue { background: #dbeafe; color: #2563eb; } .btn-blue:hover { background: var(--blue); color:#fff; }
+  .btn-sm { padding: 6px 12px; font-size: 11px; border-radius: 8px; }
+
+  /* Table rows */
+  .row-item { display: flex; align-items: center; gap: 14px; padding: 13px 0; border-bottom: 1px solid #f1f5f9; }
+  .row-item:last-child { border-bottom: none; }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #e2e8f0, #cbd5e1); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; color: #475569; flex-shrink: 0; overflow: hidden; }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .row-main { flex: 1; min-width: 0; }
+  .row-title { font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .row-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; word-break: break-all; }
+  .row-actions { display: flex; gap: 7px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; align-items:center; }
+
+  .badge { font-size: 9.5px; font-weight: 800; padding: 3px 9px; border-radius: 20px; text-transform: uppercase; letter-spacing: .5px; }
+  .badge.green { background: #d1fae5; color: #059669; } .badge.red { background: #fee2e2; color: #dc2626; }
+  .badge.amber { background: #fef3c7; color: #b45309; } .badge.gray { background: #f1f5f9; color: #64748b; }
+  .badge.blue { background: #dbeafe; color: #2563eb; } .badge.purple { background: #ede9fe; color: #7c3aed; }
+
+  .thumb { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: #e2e8f0; flex-shrink: 0; }
+
+  .empty { text-align: center; padding: 40px; color: var(--muted); font-size: 13px; }
+  .loading { text-align: center; padding: 40px; color: var(--muted); font-size: 13px; }
+
+  /* Modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 200; display: none; align-items: center; justify-content: center; }
+  .modal-overlay.active { display: flex; }
+  .modal { background: #fff; border-radius: 16px; padding: 26px; width: 440px; max-width: 92vw; box-shadow: 0 25px 60px rgba(0,0,0,.3); }
+  .modal h3 { font-size: 16px; font-weight: 800; margin-bottom: 6px; }
+  .modal .modal-sub { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+  .modal textarea, .modal input[type=text], .modal select {
+    width: 100%; border: 1.5px solid var(--border); border-radius: 10px; padding: 10px 14px; font-size: 12.5px; font-family: inherit; outline: none;
+  }
+  .modal textarea { resize: vertical; min-height: 70px; }
+  .modal textarea:focus, .modal input:focus, .modal select:focus { border-color: var(--accent); }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+
+  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--dark); color: #fff; padding: 13px 20px; border-radius: 12px; font-size: 13px; font-weight: 600; z-index: 300; display: none; box-shadow: 0 10px 30px rgba(0,0,0,.3); max-width: 420px; line-height:1.5; }
+  .toast.show { display: block; animation: slideIn .25s; }
+  @keyframes slideIn { from { transform: translateY(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  .report-detail { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin: 8px 0; font-size: 12px; line-height: 1.6; }
+  .report-detail b { color: var(--text); }
+
+  /* Audit table */
+  .audit-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  .audit-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); padding: 8px 10px; border-bottom: 2px solid var(--border); }
+  .audit-table td { padding: 9px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+  .audit-table code { background:#f1f5f9; padding:2px 6px; border-radius:6px; font-size:10.5px; }
+
+  .idle-warn { position: fixed; bottom: 24px; left: 24px; background: #fef3c7; color: #92400e; border: 1.5px solid var(--amber); padding: 14px 18px; border-radius: 12px; font-size: 12.5px; font-weight: 700; z-index: 300; display: none; box-shadow: 0 10px 30px rgba(0,0,0,.15); }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="login-logo">🛡️</div>
+
+    <!-- STEP 1: PASSWORD -->
+    <div id="passwordStep">
+      <h1>Anvio Talk</h1>
+      <p class="sub">Admin Console — Restricted Access</p>
+      <input type="email" id="loginEmail" placeholder="Admin email" autocomplete="username" />
+      <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" />
+      <button class="btn-primary" id="loginBtn">Continue →</button>
+      <button class="link-btn" id="forgotBtn">Password bhool gaye? Reset link bhejo</button>
+      <div id="loginError"></div>
+      <div id="resetMsg" style="display:none;color:var(--accent);font-size:11.5px;margin-top:8px;font-weight:600;line-height:1.5"></div>
+    </div>
+
+    <!-- STEP 2a: TOTP CODE -->
+    <div id="twoFaStep">
+      <span class="step-tag">Step 2 — Two-Factor</span>
+      <h1>Authenticator Code</h1>
+      <p class="sub">Google Authenticator ka 6-digit code daalo (<span id="twofaEmail" style="font-weight:700"></span>)</p>
+      <input type="text" id="totpCode" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="one-time-code" />
+      <button class="btn-primary" id="verifyBtn">Verify & Sign In</button>
+      <div id="loginError2fa" style="color:var(--red);font-size:12px;margin-top:12px;min-height:16px;font-weight:600"></div>
+    </div>
+
+    <!-- STEP 2b: FIRST-TIME 2FA SETUP (QR) -->
+    <div id="setupStep" style="display:none">
+      <span class="step-tag">First-time setup</span>
+      <h1>2FA Setup</h1>
+      <p class="sub">Google Authenticator app se yeh QR scan karo</p>
+      <div class="qr-box">
+        <img id="qrImage" alt="2FA QR Code" />
+        <div class="qr-hint">
+          Phone me <b>Google Authenticator</b> kholo → <b>+</b> → <b>Scan a QR code</b><br/>
+          Scan ke baad app me jo 6-digit code dikhe, wo neeche daalo.
+          <div class="secret-text" id="secretText"></div>
+        </div>
+      </div>
+      <input type="text" id="setupCode" placeholder="000000" maxlength="6" inputmode="numeric" />
+      <button class="btn-primary" id="setupVerifyBtn">Confirm & Finish Setup</button>
+      <div id="loginErrorSetup" style="color:var(--red);font-size:12px;margin-top:12px;min-height:16px;font-weight:600"></div>
+    </div>
+
+    <button class="back-link" id="backToPassword" style="display:none">← Wapas password step par</button>
+    <div id="serverStatus">Checking server…</div>
+    <p class="login-note">
+      Alag admin session — aapke app account se juda nahi.<br/>
+      Mandatory TOTP 2FA · 30-min idle auto-logout · Audit-logged.
+    </p>
+  </div>
+</div>
+
+<!-- APP SHELL -->
+<div id="app">
+  <div class="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">Anvio Talk</div>
+      <div class="tag">Admin Console</div>
+    </div>
+
+    <div class="nav-section">Overview</div>
+    <div class="nav-item active" data-page="dashboard"><span class="ico">📊</span> Dashboard</div>
+    <div class="nav-item" data-page="analytics"><span class="ico">📈</span> Analytics</div>
+
+    <div class="nav-section">Moderation</div>
+    <div class="nav-item" data-page="users"><span class="ico">👥</span> Users <span class="nav-badge" id="badgeUsers" style="display:none">0</span></div>
+    <div class="nav-item" data-page="reports"><span class="ico">🚩</span> Reports <span class="nav-badge" id="badgeReports" style="display:none">0</span></div>
+    <div class="nav-item" data-page="dating"><span class="ico">💔</span> Dating Flags</div>
+    <div class="nav-item" data-page="stories"><span class="ico">🖼️</span> Posts / Stories</div>
+
+    <div class="nav-section">Finance</div>
+    <div class="nav-item" data-page="payouts"><span class="ico">💰</span> Payouts</div>
+    <div class="nav-item" data-page="approvals"><span class="ico">✅</span> Approvals <span class="nav-badge" id="badgeApprovals" style="display:none">0</span></div>
+    <div class="nav-item" data-page="monetization"><span class="ico">📊</span> Monetization</div>
+
+    <div class="nav-section">System</div>
+    <div class="nav-item" data-page="audit"><span class="ico">🧾</span> Audit Logs</div>
+    <div class="nav-item" data-page="admins"><span class="ico">🛡️</span> Admins & Config</div>
+
+    <div class="sidebar-footer">
+      <div class="admin-name" id="adminEmail">—</div>
+      <div class="admin-role" id="adminRole">Administrator</div>
+      <div class="idle-hint">⏱ 30 min idle → auto logout</div>
+      <button class="btn-logout" id="logoutBtn">Sign Out</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-title">Dashboard</div>
+      <div class="page-sub">Platform overview — live data from Anvio Talk</div>
+      <div class="stats-grid" id="overviewStats">
+        <div class="stat-card"><div class="label">Total Users</div><div class="value" id="stUsers">—</div><div class="hint" id="stUsersHint"></div></div>
+        <div class="stat-card red"><div class="label">Blocked Users</div><div class="value" id="stBlocked">—</div><div class="hint" id="stBlockedHint"></div></div>
+        <div class="stat-card amber"><div class="label">Pending Reports</div><div class="value" id="stReports">—</div><div class="hint">needs review</div></div>
+        <div class="stat-card blue"><div class="label">Total Posts</div><div class="value" id="stStories">—</div><div class="hint" id="stStoriesHint"></div></div>
+        <div class="stat-card purple"><div class="label">Views This Month</div><div class="value" id="stViews">—</div><div class="hint">verified monetizable</div></div>
+        <div class="stat-card green"><div class="label">Pending Payouts</div><div class="value" id="stPayouts">—</div><div class="hint" id="stPayoutsHint"></div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Quick Actions</h3></div>
+        <div class="card-body" style="display:flex; gap:10px; flex-wrap:wrap">
+          <button class="btn btn-dark" onclick="gotoPage('users')">👥 Manage Users</button>
+          <button class="btn btn-dark" onclick="gotoPage('reports')">🚩 Review Reports</button>
+          <button class="btn btn-dark" onclick="gotoPage('dating')">💔 Dating Flags</button>
+          <button class="btn btn-dark" onclick="gotoPage('stories')">🖼️ Moderate Posts</button>
+          <button class="btn btn-dark" onclick="gotoPage('approvals')">✅ Pending Approvals</button>
+          <button class="btn btn-dark" onclick="gotoPage('audit')">🧾 Audit Trail</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ANALYTICS -->
+    <div class="page" id="page-analytics">
+      <div class="page-title">Analytics</div>
+      <div class="page-sub">Engagement & platform health (DAU/WAU/MAU)</div>
+      <div class="stats-grid" id="analyticsStats">
+        <div class="stat-card blue"><div class="label">DAU (daily)</div><div class="value" id="anDau">—</div><div class="hint">active last 24h</div></div>
+        <div class="stat-card purple"><div class="label">WAU (weekly)</div><div class="value" id="anWau">—</div><div class="hint">active last 7 days</div></div>
+        <div class="stat-card"><div class="label">MAU (monthly)</div><div class="value" id="anMau">—</div><div class="hint">active last 30 days</div></div>
+        <div class="stat-card green"><div class="label">Stickiness</div><div class="value" id="anStick">—</div><div class="hint">DAU/MAU %</div></div>
+        <div class="stat-card"><div class="label">Total Users</div><div class="value" id="anUsers">—</div><div class="hint">all-time registrations</div></div>
+        <div class="stat-card purple"><div class="label">Total Views</div><div class="value" id="anViews">—</div><div class="hint">all verified views</div></div>
+        <div class="stat-card green"><div class="label">Total Paid Out</div><div class="value" id="anPaid">—</div><div class="hint" id="anPaidHint"></div></div>
+        <div class="stat-card red"><div class="label">Flagged Content</div><div class="value" id="anFlagged">—</div><div class="hint">open dating flags</div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Refresh</h3></div>
+        <div class="card-body"><button class="btn btn-green" onclick="loadAnalytics()">🔄 Recompute Analytics</button></div>
+      </div>
+    </div>
+
+    <!-- USERS -->
+    <div class="page" id="page-users">
+      <div class="page-title">Users</div>
+      <div class="page-sub">All registered users — warn, suspend, ban, or reactivate accounts</div>
+      <div class="card">
+        <div class="card-head">
+          <h3>All Users <span class="badge gray" id="usersCount">0</span></h3>
+          <div class="toolbar">
+            <input type="text" id="userSearch" placeholder="Search name / email / UID…" />
+            <select id="userFilter">
+              <option value="all">All</option>
+              <option value="active">Active</option>
+              <option value="suspended">Suspended</option>
+              <option value="banned">Banned</option>
+              <option value="warned">Warned</option>
+              <option value="blocked">All Blocked</option>
+            </select>
+            <button class="btn btn-green" onclick="loadUsers()">Refresh</button>
+          </div>
+        </div>
+        <div class="card-body" id="usersList"><div class="loading">Loading users…</div></div>
+      </div>
+    </div>
+
+    <!-- REPORTS -->
+    <div class="page" id="page-reports">
+      <div class="page-title">Reports</div>
+      <div class="page-sub">User reports — dismiss, warn, suspend, or delete reported content</div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Report Tickets</h3>
+          <div class="toolbar">
+            <select id="reportFilter">
+              <option value="pending">Pending</option>
+              <option value="actioned">Actioned</option>
+              <option value="dismissed">Dismissed</option>
+              <option value="all">All</option>
+            </select>
+            <button class="btn btn-green" onclick="loadReports()">Refresh</button>
+          </div>
+        </div>
+        <div class="card-body" id="reportsList"><div class="loading">Loading reports…</div></div>
+      </div>
+    </div>
+
+    <!-- DATING FLAGS -->
+    <div class="page" id="page-dating">
+      <div class="page-title">Dating Moderation</div>
+      <div class="page-sub">Reported / flagged dating profiles — confirm fake, clear, or ban</div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Flagged Profiles <span class="badge gray" id="datingCount">0</span></h3>
+          <div class="toolbar"><button class="btn btn-green" onclick="loadDatingFlags()">Refresh</button></div>
+        </div>
+        <div class="card-body" id="datingList"><div class="loading">Loading flags…</div></div>
+      </div>
+    </div>
+
+    <!-- STORIES -->
+    <div class="page" id="page-stories">
+      <div class="page-title">Posts / Stories</div>
+      <div class="page-sub">All shared posts — delete anything that violates guidelines</div>
+      <div class="card">
+        <div class="card-head">
+          <h3>All Stories <span class="badge gray" id="storiesCount">0</span></h3>
+          <div class="toolbar">
+            <input type="text" id="storySearch" placeholder="Search caption / author…" />
+            <button class="btn btn-green" onclick="loadStories()">Refresh</button>
+          </div>
+        </div>
+        <div class="card-body" id="storiesList"><div class="loading">Loading stories…</div></div>
+      </div>
+    </div>
+
+    <!-- PAYOUTS -->
+    <div class="page" id="page-payouts">
+      <div class="page-title">Payouts</div>
+      <div class="page-sub">Creator withdrawal requests — mark paid with UTR or decline. Bade payouts (threshold se upar) doosre admin ki approval maangte hain (maker-checker).</div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Withdrawal Requests</h3>
+          <div class="toolbar"><button class="btn btn-green" onclick="loadPayouts()">Refresh</button></div>
+        </div>
+        <div class="card-body" id="payoutsList"><div class="loading">Loading payouts…</div></div>
+      </div>
+    </div>
+
+    <!-- PENDING APPROVALS (maker-checker) -->
+    <div class="page" id="page-approvals">
+      <div class="page-title">Pending Approvals</div>
+      <div class="page-sub">Maker-checker queue — ek admin request banata hai, doosra approve/reject karta hai (threshold se bade payouts)</div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Approval Queue <span class="badge amber" id="approvalsCount">0</span></h3>
+          <div class="toolbar"><button class="btn btn-green" onclick="loadApprovals()">Refresh</button></div>
+        </div>
+        <div class="card-body" id="approvalsList"><div class="loading">Loading approvals…</div></div>
+      </div>
+    </div>
+
+    <!-- MONETIZATION -->
+    <div class="page" id="page-monetization">
+      <div class="page-title">Monetization Report</div>
+      <div class="page-sub">Platform-wide verified views & creator earnings (₹40 / 1k views)</div>
+      <div class="stats-grid" id="monTotals"></div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Per-Creator Breakdown</h3>
+          <div class="toolbar"><button class="btn btn-green" onclick="loadMonetization()">Refresh</button></div>
+        </div>
+        <div class="card-body" id="monCreators"><div class="loading">Loading report…</div></div>
+      </div>
+    </div>
+
+    <!-- AUDIT LOGS -->
+    <div class="page" id="page-audit">
+      <div class="page-title">Audit Logs</div>
+      <div class="page-sub">Immutable trail — har sensitive action ka record (kaun, kya, kab, kahan se)</div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Recent Admin Activity</h3>
+          <div class="toolbar">
+            <input type="text" id="auditSearch" placeholder="Filter: action / admin / target…" />
+            <button class="btn btn-green" onclick="loadAuditLogs()">Refresh</button>
+          </div>
+        </div>
+        <div class="card-body" id="auditList"><div class="loading">Loading audit trail…</div></div>
+      </div>
+    </div>
+
+    <!-- ADMINS & CONFIG -->
+    <div class="page" id="page-admins">
+      <div class="page-title">Admins & Config</div>
+      <div class="page-sub">Admin accounts, roles, 2FA resets (SUPER_ADMIN only)</div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-head"><h3>Admin Accounts</h3>
+          <div class="toolbar"><button class="btn btn-green" onclick="loadAdmins()">Refresh</button></div>
+        </div>
+        <div class="card-body" id="adminsList"><div class="loading">Loading admins…</div></div>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-head"><h3>Invite New Admin</h3></div>
+        <div class="card-body">
+          <div class="toolbar">
+            <input type="text" id="inviteEmail" placeholder="new-admin@email.com" style="min-width:230px" />
+            <select id="inviteRole">
+              <option value="MODERATOR">MODERATOR</option>
+              <option value="FINANCE_ADMIN">FINANCE_ADMIN</option>
+              <option value="SUPPORT">SUPPORT</option>
+              <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+            </select>
+            <button class="btn btn-green" onclick="inviteAdmin()">➕ Invite</button>
+          </div>
+          <div class="row-sub" style="margin-top:10px">Naya admin apne pehle login par Google Authenticator setup karega. Email Firebase Auth me registered hona chahiye.</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Platform Config</h3></div>
+        <div class="card-body" id="configBody">
+          <div style="display:grid;gap:14px;max-width:520px">
+            <div>
+              <div class="row-title" style="font-size:12px">Payout maker-checker threshold (USD)</div>
+              <input type="number" id="cfgThreshold" min="0" step="1" style="margin-top:6px;width:100%;padding:9px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:12.5px" />
+              <div class="row-sub">Isse bade payout doosre admin ki approval ke bina paid nahi honge.</div>
+            </div>
+            <div>
+              <div class="row-title" style="font-size:12px">IP Whitelist (comma separated, khali = sab allowed)</div>
+              <input type="text" id="cfgWhitelist" placeholder="e.g. 192.168.1.*, 10.0.0.5" style="margin-top:6px;width:100%;padding:9px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:12.5px" />
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <input type="checkbox" id="cfgVpn" style="width:16px;height:16px" />
+              <div class="row-title" style="font-size:12px">VPN/whitelist gate enable</div>
+            </div>
+            <div>
+              <div class="row-title" style="font-size:12px">Role → Permissions map (JSON, advanced)</div>
+              <textarea id="cfgRoleMap" style="margin-top:6px;width:100%;min-height:150px;font-family:monospace;font-size:11px;padding:10px;border:1.5px solid var(--border);border-radius:10px"></textarea>
+            </div>
+            <div><button class="btn btn-green" onclick="saveConfig()">💾 Save Config</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CONFIRM MODAL -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <h3 id="modalTitle">Confirm</h3>
+    <p class="modal-sub" id="modalSub"></p>
+    <textarea id="modalNote" placeholder="Reason / note (optional, audit-logged)…"></textarea>
+    <div class="modal-actions">
+      <button class="btn btn-dark" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-red" id="modalConfirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="idle-warn" id="idleWarn">⏳ Aap 29+ minute se idle ho — 1 minute me auto-logout hoga. Kuch bhi click/move karo to session refresh ho jayega.</div>
+
+<script>
+// ============ CONFIG ============
+const API_BASE = 'http://localhost:3000';
+
+firebase.initializeApp({
+  apiKey: "AIzaSyBR9e8eLDsyr5cHhwkcanRTbPqqjfGBBHU",
+  authDomain: "anvio-talk.firebaseapp.com",
+  projectId: "anvio-talk"
+});
+
+let authToken = null;      // ADMIN session JWT (separate from any Firebase user token)
+let adminEmail = null;
+let adminRole = null;
+let temp2FaToken = null;   // step-1 token (5 min)
+
+const LS_TOKEN = 'AT_ADMIN_TOKEN', LS_EMAIL = 'AT_ADMIN_EMAIL', LS_ROLE = 'AT_ADMIN_ROLE';
+
+// ============ HELPERS ============
+const $ = (id) => document.getElementById(id);
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 4200);
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(API_BASE + path, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authToken ? { 'Authorization': 'Bearer ' + authToken } : {}),
+      ...(options.headers || {})
+    }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { await forceLogout('Session expired — dobara login karo.'); throw new Error('Session expired.'); }
+  if (!res.ok && !data.success) throw new Error(data.error || ('Request failed: ' + res.status));
+  return data;
+}
+
+function initials(name) {
+  return String(name || 'U').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function fmtDate(ms) {
+  if (!ms) return '—';
+  return new Date(ms).toLocaleDateString() + ' ' + new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ============ SERVER CHECK ============
+async function checkServer() {
+  const el = $('serverStatus');
+  try {
+    const res = await fetch(API_BASE + '/api/admin/auth/login', {
+      method: 'HEAD', signal: AbortSignal.timeout(5000)
+    }).catch(() => fetch(API_BASE + '/api/admin/analytics', { signal: AbortSignal.timeout(5000) }));
+    if (res.status === 401 || res.status === 405 || res.ok || res.status === 400) { el.textContent = '● Server connected'; el.className = 'ok'; return true; }
+    throw new Error('down');
+  } catch (e) {
+    el.textContent = '● Server offline — run start-anviotalk.bat first';
+    el.className = 'down';
+    return false;
+  }
+}
+
+// ============ LOGIN FLOW (password → 2FA) ============
+function showStep(step) {
+  $('passwordStep').style.display = step === 'password' ? '' : 'none';
+  $('twoFaStep').style.display = step === 'twofa' ? '' : 'none';
+  $('setupStep').style.display = step === 'setup' ? '' : 'none';
+  $('backToPassword').style.display = step === 'password' ? 'none' : '';
+}
+
+$('backToPassword').addEventListener('click', () => { temp2FaToken = null; showStep('password'); });
+
+$('loginBtn').addEventListener('click', async () => {
+  const email = $('loginEmail').value.trim().toLowerCase();
+  const password = $('loginPassword').value;
+  const err = $('loginError');
+  err.textContent = '';
+  if (!email || !password) { err.textContent = 'Email aur password dono daalo.'; return; }
+
+  $('loginBtn').disabled = true;
+  $('loginBtn').textContent = 'Verifying…';
+  try {
+    const res = await fetch(API_BASE + '/api/admin/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      err.textContent = data.error || (res.status === 429 ? `Bahut galat koshishen — ${data.retryAfterMin || 15} min baad try karo.` : 'Login failed.');
+      return;
+    }
+    temp2FaToken = data.tempToken;
+    $('twofaEmail').textContent = data.email || email;
+
+    if (data.totpEnabled) {
+      showStep('twofa');
+      setTimeout(() => $('totpCode').focus(), 60);
+    } else {
+      // First-time: fetch QR via setup endpoint
+      const sRes = await fetch(API_BASE + '/api/admin/auth/2fa/setup', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tempToken })
+      });
+      const sData = await sRes.json().catch(() => ({}));
+      if (!sRes.ok || !sData.success) {
+        err.textContent = sData.error || '2FA setup shuru nahi ho paya.';
+        return;
+      }
+      $('qrImage').src = sData.qrDataUrl;
+      $('secretText').textContent = 'Key (manual): ' + sData.secret;
+      showStep('setup');
+      setTimeout(() => $('setupCode').focus(), 60);
+    }
+  } catch (e) {
+    err.textContent = 'Server se connect nahi ho paya. start-anviotalk.bat chala kar dobara try karo.';
+  } finally {
+    $('loginBtn').disabled = false;
+    $('loginBtn').textContent = 'Continue →';
+  }
+});
+$('loginPassword').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('loginBtn').click(); });
+
+async function verify2Fa(code, errEl, btn) {
+  errEl.textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'Verifying…';
+  try {
+    const res = await fetch(API_BASE + '/api/admin/auth/2fa', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tempToken, code })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      errEl.textContent = data.error || (res.status === 429 ? 'Account/IP lock — thodi der baad try karo.' : 'Wrong code.');
+      return;
+    }
+    authToken = data.token;
+    adminEmail = data.email;
+    adminRole = data.role;
+    localStorage.setItem(LS_TOKEN, authToken);
+    localStorage.setItem(LS_EMAIL, adminEmail);
+    localStorage.setItem(LS_ROLE, adminRole);
+    temp2FaToken = null;
+    enterApp();
+  } catch (e) {
+    errEl.textContent = 'Verification failed — server check karo.';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = btn.id === 'verifyBtn' ? 'Verify & Sign In' : 'Confirm & Finish Setup';
+  }
+}
+
+$('verifyBtn').addEventListener('click', () => {
+  const code = $('totpCode').value.trim();
+  if (!/^\d{6}$/.test(code)) { $('loginError2fa').textContent = '6-digit code daalo.'; return; }
+  verify2Fa(code, $('loginError2fa'), $('verifyBtn'));
+});
+$('totpCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('verifyBtn').click(); });
+
+$('setupVerifyBtn').addEventListener('click', () => {
+  const code = $('setupCode').value.trim();
+  if (!/^\d{6}$/.test(code)) { $('loginErrorSetup').textContent = '6-digit code daalo.'; return; }
+  verify2Fa(code, $('loginErrorSetup'), $('setupVerifyBtn'));
+});
+$('setupCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('setupVerifyBtn').click(); });
+
+// Forgot password — Firebase reset email (client SDK, password change only)
+$('forgotBtn').addEventListener('click', async () => {
+  const email = $('loginEmail').value.trim().toLowerCase();
+  const err = $('loginError');
+  const ok = $('resetMsg');
+  err.textContent = '';
+  ok.style.display = 'none';
+  if (!email) { err.textContent = 'Pehle apna admin email likho, phir yeh dabao.'; return; }
+  $('forgotBtn').disabled = true;
+  try {
+    await firebase.auth().sendPasswordResetEmail(email);
+    ok.textContent = '✅ Reset link email par bhej diya! Gmail kholo (inbox/spam), "Reset Password" link se naya password banao, phir wapas login karo.';
+    ok.style.display = 'block';
+  } catch (e) {
+    err.textContent = 'Reset link nahi bhej paye: ' + (e?.code === 'auth/user-not-found' ? 'Yeh email Firebase me registered nahi hai.' : (e.message || 'Error'));
+  } finally {
+    $('forgotBtn').disabled = false;
+  }
+});
+
+function enterApp() {
+  $('loginScreen').style.display = 'none';
+  $('app').classList.add('active');
+  $('adminEmail').textContent = adminEmail || '—';
+  $('adminRole').textContent = adminRole || 'ADMIN';
+  resetIdle();
+  refreshAll();
+}
+
+async function forceLogout(reason) {
+  try { if (authToken) await fetch(API_BASE + '/api/admin/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' }, body: '{}' }); } catch (e) { /* ignore */ }
+  authToken = null; adminEmail = null; adminRole = null; temp2FaToken = null;
+  localStorage.removeItem(LS_TOKEN); localStorage.removeItem(LS_EMAIL); localStorage.removeItem(LS_ROLE);
+  $('app').classList.remove('active');
+  $('loginScreen').style.display = 'flex';
+  showStep('password');
+  $('loginPassword').value = '';
+  if (reason) toast('🔒 ' + reason);
+  checkServer();
+}
+
+$('logoutBtn').addEventListener('click', () => forceLogout('Signed out.'));
+
+// ============ 30-MIN IDLE AUTO-LOGOUT (server enforces too) ============
+const IDLE_LIMIT_MS = 30 * 60 * 1000;
+const IDLE_WARN_MS = 29 * 60 * 1000;
+let lastActivity = Date.now();
+let idleWarned = false;
+
+['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(ev =>
+  document.addEventListener(ev, () => {
+    if (Date.now() - lastActivity > 60 * 1000 && authToken) { /* activity jump: nothing extra needed */ }
+    lastActivity = Date.now();
+    if (idleWarned) { idleWarned = false; $('idleWarn').style.display = 'none'; }
+  }, { passive: true })
+);
+
+function resetIdle() { lastActivity = Date.now(); idleWarned = false; $('idleWarn').style.display = 'none'; }
+
+setInterval(async () => {
+  if (!authToken) return;
+  const idle = Date.now() - lastActivity;
+  if (idle >= IDLE_LIMIT_MS) {
+    await forceLogout('30 minute idle — security ke liye auto-logout ho gaya.');
+  } else if (idle >= IDLE_WARN_MS && !idleWarned) {
+    idleWarned = true;
+    $('idleWarn').style.display = 'block';
+  }
+}, 15000);
+
+// ============ NAV ============
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => gotoPage(item.dataset.page));
+});
+
+function gotoPage(page) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + page));
+  if (page === 'dashboard') loadOverview();
+  if (page === 'analytics') loadAnalytics();
+  if (page === 'users') loadUsers();
+  if (page === 'reports') loadReports();
+  if (page === 'dating') loadDatingFlags();
+  if (page === 'stories') loadStories();
+  if (page === 'payouts') loadPayouts();
+  if (page === 'approvals') loadApprovals();
+  if (page === 'monetization') loadMonetization();
+  if (page === 'audit') loadAuditLogs();
+  if (page === 'admins') { loadAdmins(); loadConfig(); }
+}
+
+function refreshAll() {
+  loadOverview();
+  preloadBadges();
+}
+
+// ============ OVERVIEW ============
+async function loadOverview() {
+  try {
+    const d = await api('/api/admin/overview');
+    $('stUsers').textContent = d.totalUsers ?? '—';
+    $('stUsersHint').textContent = `${d.warnedUsers ?? 0} warned`;
+    $('stBlocked').textContent = (d.suspendedUsers ?? 0) + (d.bannedUsers ?? 0);
+    $('stBlockedHint').textContent = `${d.bannedUsers ?? 0} banned · ${d.suspendedUsers ?? 0} suspended`;
+    $('stReports').textContent = d.pendingReports ?? '—';
+    $('stStories').textContent = d.storiesCount ?? '—';
+    $('stStoriesHint').textContent = `${d.newStories24h ?? 0} new in 24h`;
+    $('stViews').textContent = (d.monthViews ?? 0).toLocaleString();
+    $('stPayouts').textContent = '$' + (d.pendingPayoutUsd ?? 0).toFixed(2);
+    $('stPayoutsHint').textContent = `${d.pendingPayouts ?? 0} requests waiting`;
+  } catch (e) { console.warn('overview:', e); }
+}
+
+async function preloadBadges() {
+  try {
+    const d = await api('/api/admin/overview');
+    if (d.pendingReports > 0) { $('badgeReports').style.display = ''; $('badgeReports').textContent = d.pendingReports; }
+    const blocked = (d.suspendedUsers ?? 0) + (d.bannedUsers ?? 0);
+    if (blocked > 0) { $('badgeUsers').style.display = ''; $('badgeUsers').textContent = blocked; }
+  } catch (e) { /* ignore */ }
+}
+
+// ============ ANALYTICS ============
+async function loadAnalytics() {
+  ['anDau','anWau','anMau','anStick','anUsers','anViews','anPaid','anFlagged'].forEach(id => $(id).textContent = '…');
+  try {
+    const d = await api('/api/admin/analytics');
+    $('anDau').textContent = d.dau ?? 0;
+    $('anWau').textContent = d.wau ?? 0;
+    $('anMau').textContent = d.mau ?? 0;
+    $('anStick').textContent = (d.stickiness ?? 0) + '%';
+    $('anUsers').textContent = d.totalUsers ?? 0;
+    $('anViews').textContent = (d.totalViews ?? 0).toLocaleString();
+    $('anPaid').textContent = '$' + (d.totalPaidOutUsd ?? 0).toFixed(2);
+    $('anPaidHint').textContent = `${d.paidPayoutCount ?? 0} payouts`;
+    $('anFlagged').textContent = d.flaggedContentCount ?? 0;
+  } catch (e) {
+    ['anDau','anWau','anMau','anStick','anUsers','anViews','anPaid','anFlagged'].forEach(id => $(id).textContent = '—');
+    toast('❌ ' + e.message);
+  }
+}
+
+// ============ USERS ============
+async function loadUsers() {
+  const el = $('usersList');
+  el.innerHTML = '<div class="loading">Loading users…</div>';
+  try {
+    const q = new URLSearchParams();
+    if ($('userSearch').value.trim()) q.set('search', $('userSearch').value.trim());
+    if ($('userFilter').value !== 'all') q.set('status', $('userFilter').value);
+    const d = await api('/api/admin/users?' + q.toString());
+    $('usersCount').textContent = d.total ?? d.users.length;
+    if (!d.users.length) { el.innerHTML = '<div class="empty">No users found.</div>'; return; }
+    el.innerHTML = d.users.map(u => {
+      const blocked = u.accountStatus === 'suspended' || u.accountStatus === 'banned';
+      return `
+      <div class="row-item">
+        <div class="avatar">${u.avatarUrl ? `<img src="${u.avatarUrl}" onerror="this.remove()">` : initials(u.displayName)}</div>
+        <div class="row-main">
+          <div class="row-title">
+            ${esc(u.displayName)}
+            <span style="color:var(--muted);font-weight:500">@${esc(u.username)}</span>
+            ${u.accountStatus === 'banned' ? '<span class="badge red">Banned</span>' : u.accountStatus === 'suspended' ? '<span class="badge red">Suspended</span>' : '<span class="badge green">Active</span>'}
+            ${u.hasWarning ? '<span class="badge amber">Warned</span>' : ''}
+          </div>
+          <div class="row-sub">${esc(u.email || 'no email')} · ${u.followersCount || 0} followers · ${esc(u.monetizationStatus || 'In Progress')} · UID ${esc(u.uid)}</div>
+          ${blocked && u.suspendedReason ? `<div class="row-sub" style="color:var(--red)">Reason: ${esc(u.suspendedReason)}</div>` : ''}
+        </div>
+        <div class="row-actions">
+          ${!blocked ? `
+            <button class="btn btn-amber btn-sm" onclick="userAction('${u.uid}','warn','${esc(u.displayName)}')">Warn</button>
+            <button class="btn btn-red btn-sm" onclick="userAction('${u.uid}','suspend','${esc(u.displayName)}')">Suspend</button>
+            <button class="btn btn-red btn-sm" style="background:var(--red);color:#fff" onclick="userAction('${u.uid}','ban','${esc(u.displayName)}')">Ban</button>
+          ` : `
+            <button class="btn btn-green btn-sm" onclick="userAction('${u.uid}','reactivate','${esc(u.displayName)}')">Reactivate</button>
+          `}
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`;
+  }
+}
+$('userSearch').addEventListener('keydown', e => { if (e.key === 'Enter') loadUsers(); });
+$('userFilter').addEventListener('change', loadUsers);
+
+// ============ CONFIRM MODAL ============
+let pendingAction = null;   // { type, ...payload }
+function openConfirm(title, sub, confirmLabel, action) {
+  pendingAction = action;
+  $('modalTitle').textContent = title;
+  $('modalSub').textContent = sub;
+  $('modalNote').value = '';
+  $('modalConfirm').textContent = confirmLabel;
+  $('modalOverlay').classList.add('active');
+}
+function closeModal() { $('modalOverlay').classList.remove('active'); pendingAction = null; }
+$('modalOverlay').addEventListener('click', e => { if (e.target === $('modalOverlay')) closeModal(); });
+
+function userAction(uid, action, name) {
+  const labels = {
+    warn: ['Issue Warning?', `Warning will be added to ${name}'s account.`],
+    suspend: ['Suspend Account?', `${name} will be logged out and blocked until reactivated. Monetization suspended.`],
+    ban: ['Permanently Ban?', `${name} will be permanently blocked from the app. This is serious.`],
+    reactivate: ['Reactivate Account?', `${name} will regain full access.`]
+  };
+  openConfirm(labels[action][0], labels[action][1], action === 'reactivate' ? 'Reactivate' : 'Confirm ' + action, { type: 'user', uid, action });
+}
+
+$('modalConfirm').addEventListener('click', async () => {
+  if (!pendingAction) return;
+  const act = pendingAction;
+  const note = $('modalNote').value.trim();
+  try {
+    if (act.type === 'user') {
+      await api(`/api/admin/users/${act.uid}/action`, { method: 'POST', body: JSON.stringify({ action: act.action, note: note || undefined }) });
+      toast('✅ Action applied: ' + act.action);
+      loadUsers(); loadOverview();
+    } else if (act.type === 'story') {
+      await api(`/api/admin/stories/${act.storyId}/delete`, { method: 'POST', body: JSON.stringify({ note: note || undefined }) });
+      toast('🗑️ Post deleted permanently');
+      loadStories(); loadOverview();
+    } else if (act.type === 'dating') {
+      await api(`/api/admin/dating-flags/${act.flagId}/action`, { method: 'POST', body: JSON.stringify({ action: act.action, note: note || undefined }) });
+      toast('✅ Flag ' + act.action);
+      loadDatingFlags();
+    } else if (act.type === 'admin-reset2fa') {
+      await api(`/api/admin/admins/${act.uid}/reset-2fa`, { method: 'POST', body: JSON.stringify({ note: note || undefined }) });
+      toast('✅ 2FA reset — admin next login par naya QR setup karega.');
+      loadAdmins();
+    } else if (act.type === 'admin-setactive') {
+      await api(`/api/admin/admins/${act.uid}/set-active`, { method: 'POST', body: JSON.stringify({ isActive: act.isActive }) });
+      toast(act.isActive ? '✅ Admin enabled' : '🔒 Admin disabled');
+      loadAdmins();
+    }
+    closeModal();
+  } catch (e) {
+    toast('❌ ' + e.message);
+  }
+});
+
+// ============ REPORTS ============
+async function loadReports() {
+  const el = $('reportsList');
+  el.innerHTML = '<div class="loading">Loading reports…</div>';
+  try {
+    const filter = $('reportFilter').value;
+    const d = await api('/api/admin/reports?status=' + filter);
+    const reports = d.reports || [];
+    if (!reports.length) { el.innerHTML = '<div class="empty">No reports for this filter.</div>'; return; }
+    el.innerHTML = reports.map(r => `
+      <div class="report-detail">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div><b>${r.targetType === 'user' ? '👤 User' : r.targetType === 'story' ? '🖼️ Post' : '📦 ' + esc(r.targetType)}</b>
+          <span style="color:var(--muted)"> ${esc(r.targetName || '')} ${r.targetUsername ? '@' + esc(r.targetUsername) : ''} (ID: ${esc(r.targetId)})</span></div>
+          <span class="badge ${r.status === 'pending' ? 'amber' : 'green'}">${esc(r.status)}</span>
+        </div>
+        <div><b>Reason:</b> ${esc(r.reason)}${r.reasonCategory ? ` (${esc(r.reasonCategory)})` : ''}</div>
+        ${r.details ? `<div><b>Details:</b> ${esc(r.details)}</div>` : ''}
+        ${r.targetContent ? `<div><b>Content:</b> ${esc(String(r.targetContent).slice(0, 160))}</div>` : ''}
+        <div style="color:var(--muted);font-size:11px;margin-top:4px">Reported by ${esc(r.reporterName || r.reporterUid)} ${r.reporterUsername ? '@' + esc(r.reporterUsername) : ''} · ${fmtDate(r.createdAt ? new Date(r.createdAt).getTime() : 0)}</div>
+        ${r.status === 'pending' ? `
+        <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end;flex-wrap:wrap">
+          <button class="btn btn-dark btn-sm" onclick="reportAction('${r.id}','dismiss')">Dismiss</button>
+          ${r.targetType === 'story' || r.targetType === 'image' ? `<button class="btn btn-red btn-sm" onclick="reportDeleteContent('${r.id}')">🗑️ Delete Post</button>` : ''}
+          ${r.targetType === 'user' ? `<button class="btn btn-amber btn-sm" onclick="reportWarn('${r.targetId}','${r.id}')">Warn User</button>
+          <button class="btn btn-red btn-sm" onclick="reportSuspend('${r.targetId}','${r.id}')">Suspend User</button>` : ''}
+        </div>` : ''}
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`;
+  }
+}
+$('reportFilter').addEventListener('change', loadReports);
+
+async function reportAction(reportId, action) {
+  try {
+    await api(`/api/admin/reports/${reportId}/action`, { method: 'POST', body: JSON.stringify({ action }) });
+    toast('✅ Report ' + action + 'ed');
+    loadReports(); loadOverview();
+  } catch (e) { toast('❌ ' + e.message); }
+}
+
+function reportDeleteContent(reportId) {
+  openConfirm('Delete reported post?', 'Post permanently remove ho jayega — report bhi actioned mark ho jayegi.', 'Delete Permanently', { type: 'report-delete', reportId });
+}
+
+function reportWarn(uid, reportId) {
+  openConfirm('Warn this user?', 'User ko official warning jayegi, aur report actioned mark hogi.', 'Warn + Action', { type: 'user+report', uid, userAct: 'warn', reportId, reportAct: 'warn' });
+}
+function reportSuspend(uid, reportId) {
+  openConfirm('Suspend this user?', 'User suspend hoga, aur report actioned mark hogi.', 'Suspend + Action', { type: 'user+report', uid, userAct: 'suspend', reportId, reportAct: 'suspend_user' });
+}
+
+// extend modal confirm for the extra report flows
+$('modalConfirm').addEventListener('click', async () => {
+  if (!pendingAction) return;
+  const act = pendingAction;
+  const note = $('modalNote').value.trim();
+  try {
+    if (act.type === 'report-delete') {
+      await api(`/api/admin/reports/${act.reportId}/action`, { method: 'POST', body: JSON.stringify({ action: 'delete_content', adminNote: note || undefined }) });
+      toast('🗑️ Reported content deleted');
+      loadReports(); loadOverview();
+      closeModal();
+    } else if (act.type === 'user+report') {
+      await api(`/api/admin/users/${act.uid}/action`, { method: 'POST', body: JSON.stringify({ action: act.userAct, note: note || undefined }) });
+      await api(`/api/admin/reports/${act.reportId}/action`, { method: 'POST', body: JSON.stringify({ action: act.reportAct, adminNote: note || undefined }) });
+      toast('✅ User action + report actioned');
+      loadReports(); loadOverview();
+      closeModal();
+    }
+  } catch (e) { toast('❌ ' + e.message); }
+});
+
+// ============ DATING FLAGS ============
+async function loadDatingFlags() {
+  const el = $('datingList');
+  el.innerHTML = '<div class="loading">Loading flags…</div>';
+  try {
+    const d = await api('/api/admin/dating-flags');
+    const flags = d.flags || [];
+    $('datingCount').textContent = flags.length;
+    if (!flags.length) { el.innerHTML = '<div class="empty">Koi open flag nahi. Jab koi dating profile report hogi, yahan dikhegi.</div>'; return; }
+    el.innerHTML = flags.map(f => `
+      <div class="report-detail">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div><b>💔 ${esc(f.contentType || 'dating_profile')}</b> <span style="color:var(--muted)">${esc(f.contentId || '')}</span></div>
+          <span class="badge ${f.status === 'open' ? 'amber' : f.status === 'confirmed_fake' ? 'red' : 'green'}">${esc(f.status)}</span>
+        </div>
+        <div><b>Reason:</b> ${esc(f.flagReason || '—')}</div>
+        <div style="color:var(--muted);font-size:11px;margin-top:4px">User: ${esc(f.targetUserId || '—')} · flagged ${fmtDate(f.createdAtMs)}</div>
+        ${f.status === 'open' ? `
+        <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end;flex-wrap:wrap">
+          <button class="btn btn-blue btn-sm" onclick="datingAction('${f.id}','clear_flag')">✔️ Clear (safe)</button>
+          <button class="btn btn-amber btn-sm" onclick="datingAction('${f.id}','confirm_fake')">🚫 Confirm Fake</button>
+          <button class="btn btn-red btn-sm" onclick="datingAction('${f.id}','ban_user')">⚖️ Ban User</button>
+        </div>` : ''}
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`;
+  }
+}
+
+function datingAction(flagId, action) {
+  const labels = {
+    clear_flag: ['Clear this flag?', 'Flag safe mark ho jayega — user par koi effect nahi.'],
+    confirm_fake: ['Confirm fake profile?', 'User ka profile fake-flagged ho jayega (app me visible).'],
+    ban_user: ['Ban this user?', 'User permanently ban ho jayega.']
+  };
+  openConfirm(labels[action][0], labels[action][1], 'Confirm', { type: 'dating', flagId, action });
+}
+
+// ============ STORIES ============
+async function loadStories() {
+  const el = $('storiesList');
+  el.innerHTML = '<div class="loading">Loading stories…</div>';
+  try {
+    const q = $('storySearch').value.trim();
+    const d = await api('/api/admin/stories' + (q ? '?search=' + encodeURIComponent(q) : ''));
+    $('storiesCount').textContent = d.total ?? d.stories.length;
+    if (!d.stories.length) { el.innerHTML = '<div class="empty">No stories found.</div>'; return; }
+    el.innerHTML = d.stories.map(s => `
+      <div class="row-item">
+        ${s.mediaUrl ? `<img class="thumb" src="${s.mediaUrl}" onerror="this.style.visibility='hidden'">` : '<div class="thumb"></div>'}
+        <div class="row-main">
+          <div class="row-title">${s.caption ? esc(s.caption).slice(0, 80) : '<i style="color:var(--muted)">No caption</i>'}</div>
+          <div class="row-sub">by <b>${esc(s.authorDisplayName)}</b> @${esc(s.authorUsername)} · ❤️ ${s.likesCount} · 👁️ ${s.viewsCount} · ${fmtDate(s.createdAtMs)}</div>
+          <div class="row-sub" style="font-size:10px">ID: ${esc(s.id)} · ${esc(s.audience)}</div>
+        </div>
+        <div class="row-actions">
+          <button class="btn btn-red btn-sm" onclick="deleteStory('${s.id}')">🗑️ Delete</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`;
+  }
+}
+$('storySearch').addEventListener('keydown', e => { if (e.key === 'Enter') loadStories(); });
+
+function deleteStory(storyId) {
+  openConfirm('Delete this post?', 'The post will be permanently removed from the platform for everyone.', 'Delete Permanently', { type: 'story', storyId });
+}
+
+// ============ PAYOUTS ============
+async function loadPayouts() {
+  const el = $('payoutsList');
+  el.innerHTML = '<div class="loading">Loading payouts…</div>';
+  try {
+    const d = await api('/api/admin/payouts');
+    const payouts = d.payouts || [];
+    if (!payouts.length) { el.innerHTML = '<div class="empty">No payout requests.</div>'; return; }
+    el.innerHTML = payouts.map(p => `
+      <div class="row-item">
+        <div class="avatar">💰</div>
+        <div class="row-main">
+          <div class="row-title">$${(p.amountUsd || 0).toFixed(2)} <span style="color:var(--muted);font-weight:500">≈ ₹${(p.amountInrApprox || 0).toLocaleString()}</span>
+            <span class="badge ${p.status === 'paid' ? 'green' : p.status === 'rejected' ? 'red' : 'amber'}">${esc(p.status)}</span>
+            ${p.approvalFlow === 'maker-checker' ? '<span class="badge purple">maker-checker</span>' : ''}
+          </div>
+          <div class="row-sub">Creator: ${esc(p.creatorId)} · ${fmtDate(p.requestedAt ? new Date(p.requestedAt).getTime() : 0)}</div>
+          <div class="row-sub">UPI: ${esc(p.paymentMethodSnapshot?.upiId || '—')} · ${esc(p.paymentMethodSnapshot?.bankName || '')} · A/C ${esc(p.paymentMethodSnapshot?.bankAccountNumber || '—')} · IFSC ${esc(p.paymentMethodSnapshot?.ifscCode || '—')}</div>
+          ${p.transactionReference ? `<div class="row-sub">UTR: ${esc(p.transactionReference)}</div>` : ''}
+        </div>
+        <div class="row-actions">
+          ${p.status === 'requested' ? `
+            <input type="text" id="utr_${p.id}" placeholder="UTR / Ref no." style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:11px;width:130px">
+            <button class="btn btn-green btn-sm" onclick="payoutPaid('${p.id}')">Mark Paid</button>
+            <button class="btn btn-red btn-sm" onclick="payoutReject('${p.id}')">Decline</button>
+          ` : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`;
+  }
+}
+
+async function payoutPaid(id) {
+  const utr = ($('utr_' + id) || {}).value || '';
+  if (!utr.trim()) { toast('Enter UTR / transaction reference first'); return; }
+  try {
+    const d = await api(`/api/admin/payouts/${id}/action`, { method: 'POST', body: JSON.stringify({ action: 'mark_paid', transactionReference: utr.trim() }) });
+    if (d.makerChecker) { toast('⏳ ' + d.message); }
+    else { toast('✅ Payout marked paid'); }
+    loadPayouts(); loadOverview(); loadApprovals();
+  } catch (e) { toast('❌ ' + e.message); }
+}
+
+async function payoutReject(id) {
+  try {
+    const d = await api(`/api/admin/payouts/${id}/action`, { method: 'POST', body: JSON.stringify({ action: 'reject' }) });
+    if (d.makerChecker) { toast('⏳ ' + d.message); }
+    else { toast('✅ Payout declined'); }
+    loadPayouts(); loadOverview(); loadApprovals();
+  } catch (e) { toast('❌ ' + e.message); }
+}
+
+// ============ PENDING APPROVALS (maker-checker) ============
+async function loadApprovals() {
+  const el = $('approvalsList');
+  el.innerHTML = '<div class="loading">Loading approvals…</div>';
+  try {
+    const d = await api('/api/admin/pending-approvals');
+    const approvals = d.approvals || [];
+    const pending = approvals.filter(a => a.status === 'pending').length;
+    $('approvalsCount').textContent = pending;
+    if (pending > 0) { $('badgeApprovals').style.display = ''; $('badgeApprovals').textContent = pending; }
+    else { $('badgeApprovals').style.display = 'none'; }
+    if (!approvals.length) { el.innerHTML = '<div class="empty">Abhi koi approval request nahi. Threshold se bade payout par request yahan aayegi.</div>'; return; }
+    el.innerHTML = approvals.map(a => `
+      <div class="row-item">
+        <div class="avatar">${a.status === 'pending' ? '⏳' : a.status === 'approved' ? '✅' : '❌'}</div>
+        <div class="row-main">
+          <div class="row-title">$${(a.amountUsd || 0).toFixed(2)}
+            <span class="badge ${a.status === 'pending' ? 'amber' : a.status === 'approved' ? 'green' : 'red'}">${esc(a.status)}</span>
+            <span class="badge gray">threshold $${(a.thresholdUsd || 0).toFixed(2)}</span>
+          </div>
+          <div class="row-sub">Payout: ${esc(a.payoutId || '—')} · Creator: ${esc(a.creatorId || '—')}</div>
+          <div class="row-sub">Requested by <b>${esc(a.requestedByEmail || '—')}</b> · ${fmtDate(a.requestedAtMs)}</div>
+          ${a.decidedBy ? `<div class="row-sub">Decided by <b>${esc(a.decidedBy)}</b> · ${fmtDate(a.decidedAtMs)}</div>` : ''}
+        </div>
+        <div class="row-actions">
+          ${a.status === 'pending' ? `
+            <button class="btn btn-green btn-sm" onclick="approvalDecision('${a.id}','approved')">✅ Approve & Pay</button>
+            <button class="btn btn-red btn-sm" onclick="approvalDecision('${a.id}','rejected')">❌ Reject</button>
+          ` : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`;
+  }
+}
+
+async function approvalDecision(id, decision) {
+  try {
+    await api(`/api/admin/pending-approvals/${id}/decision`, { method: 'POST', body: JSON.stringify({ decision }) });
+    toast(decision === 'approved' ? '✅ Approved — payout paid mark ho gaya.' : '❌ Approval rejected.');
+    loadApprovals(); loadPayouts(); loadOverview();
+  } catch (e) { toast('❌ ' + e.message); }
+}
+
+// ============ MONETIZATION ============
+async function loadMonetization() {
+  const el = $('monCreators');
+  el.innerHTML = '<div class="loading">Loading report…</div>';
+  try {
+    const d = await api('/api/admin/monetization-report');
+    const t = d.totals || {};
+    $('monTotals').innerHTML = `
+      <div class="stat-card purple"><div class="label">Verified Views</div><div class="value">${(t.totalViews ?? 0).toLocaleString()}</div><div class="hint">${esc(d.monthKey)}</div></div>
+      <div class="stat-card green"><div class="label">Creator Earnings</div><div class="value">$${(t.totalEarningsUsd ?? 0).toFixed(2)}</div><div class="hint">≈ ₹${(t.totalEarningsInr ?? 0).toLocaleString()}</div></div>
+      <div class="stat-card amber"><div class="label">Pending Payouts</div><div class="value">$${(t.pendingPayoutUsd ?? 0).toFixed(2)}</div><div class="hint">${t.pendingPayoutCount ?? 0} requests</div></div>
+      <div class="stat-card blue"><div class="label">Paid Out</div><div class="value">$${(t.paidPayoutUsd ?? 0).toFixed(2)}</div><div class="hint">${t.paidPayoutCount ?? 0} payouts</div></div>
+    `;
+    if (!d.creators.length) { el.innerHTML = '<div class="empty">No verified views this month yet.</div>'; return; }
+    el.innerHTML = d.creators.map(c => `
+      <div class="row-item">
+        <div class="avatar">${c.avatarUrl ? `<img src="${c.avatarUrl}" onerror="this.remove()">` : initials(c.displayName)}</div>
+        <div class="row-main">
+          <div class="row-title">${esc(c.displayName)} <span style="color:var(--muted);font-weight:500">@${esc(c.username)}</span></div>
+          <div class="row-sub">👤 ${c.profileViews} profile · 🖼️ ${c.storyViews} story · 💬 ${c.chatViews} chat · 👥 ${c.groupViews} group</div>
+        </div>
+        <div class="row-actions">
+          <span class="badge blue">${c.totalViews} views</span>
+          <span class="badge green">$${(c.earningsUsd ?? 0).toFixed(2)}</span>
+          ${c.payoutStatus ? `<span class="badge ${c.payoutStatus === 'rejected' ? 'red' : 'amber'}">${esc(c.payoutStatus)}</span>` : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`;
+  }
+}
+
+// ============ AUDIT LOGS ============
+let auditCache = [];
+async function loadAuditLogs() {
+  const el = $('auditList');
+  el.innerHTML = '<div class="loading">Loading audit trail…</div>';
+  try {
+    const d = await api('/api/admin/audit-logs?limit=200');
+    auditCache = d.logs || [];
+    renderAudit();
+  } catch (e) {
+    el.innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`;
+  }
+}
+
+function renderAudit() {
+  const el = $('auditList');
+  const f = ($('auditSearch').value || '').toLowerCase();
+  const rows = auditCache.filter(l =>
+    !f || String(l.action || '').toLowerCase().includes(f) || String(l.adminEmail || '').toLowerCase().includes(f) ||
+    String(l.targetId || '').toLowerCase().includes(f) || String(l.targetType || '').toLowerCase().includes(f)
+  );
+  if (!rows.length) { el.innerHTML = '<div class="empty">No audit entries found.</div>'; return; }
+  el.innerHTML = `
+    <table class="audit-table">
+      <thead><tr><th>Time</th><th>Admin</th><th>Action</th><th>Target</th><th>Change</th><th>IP / Note</th></tr></thead>
+      <tbody>
+        ${rows.map(l => `
+        <tr>
+          <td style="white-space:nowrap">${fmtDate(l.timestampMs)}</td>
+          <td>${esc(l.adminEmail)}</td>
+          <td><code>${esc(l.action)}</code></td>
+          <td>${esc(l.targetType)}<br/><span style="font-size:10px;color:var(--muted)">${esc(String(l.targetId).slice(0, 24))}</span></td>
+          <td style="font-size:10.5px">${l.oldValue ? 'old: ' + esc(JSON.stringify(l.oldValue).slice(0, 80)) : ''}<br/>${l.newValue ? 'new: ' + esc(JSON.stringify(l.newValue).slice(0, 80)) : ''}</td>
+          <td style="font-size:10.5px;color:var(--muted)">${esc(l.ipAddress || '')}${l.note ? '<br/>' + esc(l.note).slice(0, 90) : ''}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+$('auditSearch').addEventListener('input', renderAudit);
+
+// ============ ADMINS & CONFIG ============
+async function loadAdmins() {
+  const el = $('adminsList');
+  el.innerHTML = '<div class="loading">Loading admins…</div>';
+  try {
+    const d = await api('/api/admin/admins');
+    const admins = d.admins || [];
+    if (!admins.length) { el.innerHTML = '<div class="empty">No admin accounts.</div>'; return; }
+    el.innerHTML = admins.map(a => `
+      <div class="row-item">
+        <div class="avatar">${a.totpEnabled ? '🛡️' : '⚠️'}</div>
+        <div class="row-main">
+          <div class="row-title">${esc(a.email || a.uid)}
+            <span class="badge purple">${esc(a.role)}</span>
+            ${a.isActive === false ? '<span class="badge red">Disabled</span>' : '<span class="badge green">Active</span>'}
+            ${a.totpEnabled ? '<span class="badge blue">2FA on</span>' : '<span class="badge amber">2FA pending</span>'}
+          </div>
+          <div class="row-sub">UID: ${esc(a.uid)}${a.email ? ' · ' + esc(a.email) : ''}</div>
+        </div>
+        <div class="row-actions">
+          <select onchange="setAdminRole('${a.uid}', this.value)" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:11px">
+            ${['SUPER_ADMIN','MODERATOR','FINANCE_ADMIN','SUPPORT'].map(r => `<option value="${r}" ${a.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+          </select>
+          ${a.isActive === false
+            ? `<button class="btn btn-green btn-sm" onclick="toggleAdmin('${a.uid}', true)">Enable</button>`
+            : `<button class="btn btn-amber btn-sm" onclick="toggleAdmin('${a.uid}', false)">Disable</button>`}
+          <button class="btn btn-red btn-sm" onclick="resetAdmin2Fa('${a.uid}', '${esc(a.email || a.uid)}')">Reset 2FA</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`;
+  }
+}
+
+async function inviteAdmin() {
+  const email = $('inviteEmail').value.trim().toLowerCase();
+  const role = $('inviteRole').value;
+  if (!email) { toast('Email daalo.'); return; }
+  try {
+    await api('/api/admin/admins/invite', { method: 'POST', body: JSON.stringify({ email, role }) });
+    toast('✅ Admin invited: ' + email + ' (' + role + ')');
+    $('inviteEmail').value = '';
+    loadAdmins();
+  } catch (e) { toast('❌ ' + e.message); }
+}
+
+async function setAdminRole(uid, role) {
+  try {
+    await api(`/api/admin/admins/${uid}/set-role`, { method: 'POST', body: JSON.stringify({ role }) });
+    toast('✅ Role updated: ' + role);
+    loadAdmins();
+  } catch (e) { toast('❌ ' + e.message); loadAdmins(); }
+}
+
+function toggleAdmin(uid, isActive) {
+  openConfirm(isActive ? 'Enable this admin?' : 'Disable this admin?',
+    isActive ? 'Admin phir se login kar payega.' : 'Admin ka existing session turant revoke hoga aur naya login block hoga.',
+    isActive ? 'Enable' : 'Disable', { type: 'admin-setactive', uid, isActive });
+}
+
+function resetAdmin2Fa(uid, email) {
+  openConfirm('Reset 2FA for ' + email + '?',
+    'TOTP secret delete ho jayega (audit-logged). Admin apne next login par naya QR scan karke 2FA dobara setup karega. Sirf tab karo jab admin authenticator access kho chuka ho.',
+    'Reset 2FA', { type: 'admin-reset2fa', uid });
+}
+
+async function loadConfig() {
+  try {
+    const d = await api('/api/admin/config');
+    const c = d.config || {};
+    $('cfgThreshold').value = c.payoutApprovalThresholdUsd ?? 60;
+    $('cfgWhitelist').value = (c.ipWhitelist || []).join(', ');
+    $('cfgVpn').checked = c.vpnGateEnabled === true;
+    $('cfgRoleMap').value = JSON.stringify(c.rolePermissions || {}, null, 2);
+  } catch (e) { toast('❌ Config load: ' + e.message); }
+}
+
+async function saveConfig() {
+  try {
+    const body = {
+      payoutApprovalThresholdUsd: Number($('cfgThreshold').value || 0),
+      ipWhitelist: $('cfgWhitelist').value.split(',').map(s => s.trim()).filter(Boolean),
+      vpnGateEnabled: $('cfgVpn').checked
+    };
+    try { body.rolePermissions = JSON.parse($('cfgRoleMap').value); }
+    catch (e) { toast('❌ Role permissions valid JSON nahi hai.'); return; }
+    await api('/api/admin/config/update', { method: 'POST', body: JSON.stringify(body) });
+    toast('✅ Config saved — 60s me sab servers par effective.');
+  } catch (e) { toast('❌ ' + e.message); }
+}
+
+// ============ BOOT / AUTO-LOGIN RESTORE ============
+(async () => {
+  const saved = localStorage.getItem(LS_TOKEN);
+  if (saved) {
+    authToken = saved;
+    adminEmail = localStorage.getItem(LS_EMAIL);
+    adminRole = localStorage.getItem(LS_ROLE);
+    try {
+      const me = await api('/api/admin/auth/me');
+      adminEmail = me.email || adminEmail;
+      adminRole = me.role || adminRole;
+      enterApp();
+      return;
+    } catch (e) {
+      // token invalid/expired — fall through to login screen
+      authToken = null;
+      localStorage.removeItem(LS_TOKEN);
+    }
+  }
+  showStep('password');
+  checkServer();
+})();
+</script>
+</body>
+</html>

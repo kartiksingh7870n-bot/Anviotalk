@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   User, CheckCircle2, Crown, Sparkles, Settings, Plus, 
   Trash2, Landmark, Coins, Heart, Check, Loader2, ArrowRight,
-  Flame, BookOpen, MessageSquare, Image, ShieldAlert, Award, Grid, Share2,
+  Flame, BookOpen, MessageSquare, Image, Award, Grid, Share2,
   Camera as LucideCamera, Bookmark, Bell, ChevronRight, Scale, Target, MoreHorizontal, Sliders, ChevronLeft, Volume2, Radio, MapPin, X
 } from 'lucide-react';
 import { openExternalUrl } from '../utils/openUrl';
@@ -27,7 +27,6 @@ import AdPlacement from './AdPlacement';
 import { calculateStreak, calculateLovePercentage } from '../utils/streak';
 import ProfileSetupScreen from './ProfileSetupScreen';
 import ProfileMonetization from './ProfileMonetization';
-import AdminPanelModal from './AdminPanelModal';
 import { useAuth } from '../contexts/AuthContext';
 import ImageCropperModal from './ImageCropperModal';
 import { collection, query, where, onSnapshot, doc, deleteDoc, addDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -70,16 +69,6 @@ export default function ProfileTab({
   const { currentUser, isFirebase, updateProfile } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [activeTab, setActiveTab] = useState<'stories' | 'photos' | 'streak' | 'saved' | 'monetization'>(initialSubTab || 'stories');
-  const [showAdminPanel, setShowAdminPanel] = useState(false);
-
-  // Admin gate — matches the server-side APPROVED_ADMIN_EMAILS + isAdmin/role claim checks.
-  // The panel itself is protected server-side by verifyAdminAuth; this only controls visibility.
-  const ADMIN_EMAILS = ['admin@anviotalk.com', 'kartiksingh7870n@gmail.com'];
-  const adminEmail = String((profile as any).email || currentUser?.email || '').toLowerCase();
-  const isAdminUser =
-    ADMIN_EMAILS.includes(adminEmail) ||
-    (profile as any).isAdmin === true ||
-    (profile as any).role === 'admin';
 
   useEffect(() => {
     if (initialSubTab) {
@@ -402,26 +391,19 @@ export default function ProfileTab({
               { id: 'photos', label: 'Photos', icon: null },
               { id: 'monetization', label: 'Monetize', icon: null },
               { id: 'streak', label: 'Streak', icon: Flame },
-              { id: 'saved', label: 'Saved', icon: Bookmark },
-              ...(isAdminUser ? [{ id: 'admin', label: 'Admin', icon: ShieldAlert }] : [])
+              { id: 'saved', label: 'Saved', icon: Bookmark }
             ].map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => {
-                  if (tab.id === 'admin') {
-                    setShowAdminPanel(true);
-                    return;
-                  }
-                  setActiveTab(tab.id as any);
-                }}
+                onClick={() => setActiveTab(tab.id as any)}
                 className={`flex-1 min-w-[70px] py-1.5 px-3 rounded-full text-xs transition-all duration-300 flex items-center justify-center gap-1.5 cursor-pointer ${
                   activeTab === tab.id
                     ? 'bg-white/10 text-white shadow-sm font-semibold'
                     : 'text-white/50 font-medium hover:text-white/80'
                 }`}
               >
-                {tab.icon && <tab.icon className={`w-3 h-3 ${tab.id === 'admin' ? 'text-rose-400' : activeTab === tab.id ? 'text-orange-400' : ''}`} />}
-                <span className={tab.id === 'admin' ? 'text-rose-400' : ''}>{tab.label}</span>
+                {tab.icon && <tab.icon className={`w-3 h-3 ${activeTab === tab.id ? 'text-orange-400' : ''}`} />}
+                <span>{tab.label}</span>
               </button>
             ))}
           </div>
@@ -599,9 +581,6 @@ export default function ProfileTab({
       </AnimatePresence>
 
       <ImageCropperModal isOpen={cropperOpen} imageSrc={cropperSrc} cropType={cropperType} onCancel={() => setCropperOpen(false)} onSave={handleCropSave} />
-
-      {/* ADMIN CONSOLE (visible to approved admins only; server re-verifies every request) */}
-      <AdminPanelModal isOpen={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
 
       {/* HIDDEN INPUTS */}
       <input type="file" ref={avatarInputRef} onChange={(e) => handlePhotoUploadAttempt(e, 'avatar')} accept="image/*" className="hidden" />

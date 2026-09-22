@@ -208,5 +208,36 @@ service cloud.firestore {
       allow create: if isSignedIn();
       allow update, delete: if false;
     }
+
+    // ------------------------------------------------------------------------
+    // ADMIN PANEL v2: all admin security collections are SERVER-ONLY.
+    // Clients (web app / desktop console) can NEVER touch these directly —
+    // every access goes through the API with adminAuthGuard + requirePermission.
+    // Manual 2FA resets via the Firebase console MUST be recorded via
+    // recordTotpManualReset() so the audit trail stays complete.
+    // ------------------------------------------------------------------------
+    match /admin_users/{docId} {
+      allow read, write: if false;
+    }
+
+    match /admin_sessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /admin_audit_logs/{logId} {
+      allow read, write: if false;
+    }
+
+    match /pending_payout_approvals/{docId} {
+      allow read, write: if false;
+    }
+
+    match /flagged_content/{docId} {
+      allow read, write: if false;
+    }
+
+    match /admin_config/{docId} {
+      allow read, write: if false;
+    }
   }
 }

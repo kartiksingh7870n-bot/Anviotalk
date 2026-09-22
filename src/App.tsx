@@ -4,7 +4,7 @@ import LoginScreen from './components/LoginScreen';
 import DiscoveryMap from './components/DiscoveryMap';
 import ProfileSetupScreen from './components/ProfileSetupScreen';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { Loader2, Lock } from 'lucide-react';
+import { Loader2, Lock, Shield } from 'lucide-react';
 import ErrorBoundary from './components/ErrorBoundary';
 import AdminPanelModal from './components/AdminPanelModal';
 import SplashIntro from './components/SplashIntro';
@@ -565,47 +565,31 @@ function AppContent() {
     }} />;
   }
 
-  // Standalone Admin Console route: /admin
+  // /admin route: Admin Panel ab standalone DESKTOP SOFTWARE hai (start-admin.bat).
+  // Web app me admin surface intentionally nahi hai — yeh notice uska replacement hai.
   if (isAdminRoute) {
-    if (loading) {
-      return (
-        <div className="w-screen h-[100dvh] flex flex-col items-center justify-center bg-[#0A0A0A] text-white gap-4 font-sans">
-          <Loader2 className="w-8 h-8 text-[#DDF639] animate-spin" />
-          <p className="text-xs text-white/60 font-bold uppercase tracking-widest">Verifying admin session…</p>
-        </div>
-      );
-    }
-
-    if (!currentUser) {
-      return (
-        <div className="w-screen h-[100dvh] flex flex-col items-center justify-center bg-[#0A0A0A] text-white p-6 text-center font-sans">
-          <div className="w-16 h-16 rounded-3xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mb-5">
-            <Lock className="w-7 h-7 text-rose-400" />
-          </div>
-          <h1 className="text-lg font-black uppercase tracking-wider mb-2">Admin Access Only</h1>
-          <p className="text-xs text-white/60 max-w-xs leading-relaxed mb-6">
-            Sign in with an approved administrator account to open the console.
-            Every panel action is verified server-side.
-          </p>
-          <button
-            onClick={() => { window.history.pushState({}, '', '/'); setIsAdminRoute(false); }}
-            className="px-6 py-3 bg-[#DDF639] text-black text-xs font-black uppercase tracking-wider rounded-xl active:scale-95 transition cursor-pointer"
-          >
-            Back to App
-          </button>
-        </div>
-      );
-    }
-
     return (
-      <div className="w-screen h-[100dvh] bg-[#0A0A0A] flex items-center justify-center p-4">
-        <AdminPanelModal
-          isOpen
-          onClose={() => {
-            window.history.pushState({}, '', '/');
-            setIsAdminRoute(false);
-          }}
-        />
+      <div className="w-screen h-[100dvh] flex flex-col items-center justify-center bg-[#0A0A0A] text-white p-6 text-center font-sans">
+        <div className="w-16 h-16 rounded-3xl bg-[#DDF639]/10 border border-[#DDF639]/30 flex items-center justify-center mb-5">
+          <Shield className="w-7 h-7 text-[#DDF639]" />
+        </div>
+        <h1 className="text-lg font-black uppercase tracking-wider mb-2">Admin Panel alag software hai</h1>
+        <p className="text-xs text-white/60 max-w-sm leading-relaxed mb-6">
+          Anvio Talk ka Admin Console ab browser/app me nahi khulta. Wo ek protected desktop
+          application hai jo sirf administrator ke laptop par chalti hai — password + Google
+          Authenticator 2FA ke saath.
+        </p>
+        <div className="bg-white/5 border border-white/10 rounded-2xl px-5 py-4 mb-6 max-w-sm">
+          <p className="text-[11px] text-white/70 leading-relaxed">
+            Kholne ke liye: laptop par project folder → <span className="text-[#DDF639] font-bold">start-admin.bat</span> double-click karo.
+          </p>
+        </div>
+        <button
+          onClick={() => { window.history.pushState({}, '', '/'); setIsAdminRoute(false); }}
+          className="px-6 py-3 bg-[#DDF639] text-black text-xs font-black uppercase tracking-wider rounded-xl active:scale-95 transition cursor-pointer"
+        >
+          Back to App
+        </button>
       </div>
     );
   }

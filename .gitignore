@@ -1,4 +1,5 @@
 node_modules/
+admin-desktop/node_modules/
 build/
 dist/
 coverage/
@@ -8,6 +9,11 @@ coverage/
 !.env.example
 service-account.json
 *serviceAccount*.json
+admin-desktop/node_modules/
+server.log
+raw_boot*.log
+admin_smoke.log
+temp_tsc.txt
 scripts/*.json
 .freebuff/
 .idea/

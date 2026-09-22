@@ -2,7 +2,21 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { adminDb, adminAuth } from "./server/firebaseAdmin";
+
+// ----------------------------------------------------------------------------
+// Safety net: without a service account, Firestore's gRPC channel emits
+// asynchronous NO_ADC_FOUND errors from background timers. They must never
+// kill the whole server — API handlers already wrap their own try/catch.
+// ----------------------------------------------------------------------------
+process.on("unhandledRejection", (reason: unknown) => {
+  const msg = reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason);
+  if (msg.includes("NO_ADC_FOUND") || msg.includes("Could not load the default credentials")) {
+    console.warn("[Server] Suppressed credential-less Firestore background error (server keeps running):", msg.slice(0, 140));
+    return;
+  }
+  console.error("[Server] Unhandled rejection:", reason);
+});
+import { adminDb, adminAuth, isServiceAccountConfigured } from "./server/firebaseAdmin";
 import { startPushNotificationListeners } from "./server/pushNotifications";
 import { startNotificationScheduler } from "./server/schedulerService";
 import {
@@ -11,9 +25,49 @@ import {
   MonetizationViewSource,
   applyForMonetization, 
   runAutomatedFraudScan,
-  createAuditLog
+  createAuditLog,
+  aggregateCreatorEarningsBatch
 } from "./server/monetizationService";
 import { recordVerifiedAdImpression, requestWithdrawal, getCreatorPayouts } from "./server/payoutService";
+import QRCode from "qrcode";
+import {
+  ensureSeedSuperAdmin,
+  findAdminByEmail,
+  getAdminAccount,
+  getAdminConfig,
+  invalidateConfigCache,
+  adminAuthGuard,
+  requirePermission,
+  checkLoginRate,
+  recordFailedLogin,
+  clearFailedLogins,
+  generateTotpSecret,
+  verifyTotp,
+  createAdminSession,
+  revokeAdminSession,
+  writeAdminAudit,
+  getAdminAccount as getAdminById,
+  createTemp2FaToken,
+  verifyTemp2FaToken,
+  setSyncSecretCache,
+  warmJwtSecret,
+  hasPermission,
+  LoginStartSchema,
+  Login2FaSchema,
+  Setup2FaVerifySchema,
+  UserActionSchema,
+  PayoutActionSchema,
+  InviteAdminSchema,
+  SetRoleSchema,
+  SetActiveSchema,
+  ConfigUpdateSchema,
+  DecisionSchema,
+  DatingFlagActionSchema,
+  clientIp,
+  ADMIN_ROLES,
+  DEFAULT_ROLE_PERMISSIONS,
+  type AdminRole
+} from "./server/adminAuth";
 
 const db = adminDb;
 
@@ -269,11 +323,411 @@ async function startServer() {
 
   server.use(express.json());
 
-  // Initialize server-side push notification listeners using Firebase Admin SDK
-  await startPushNotificationListeners();
+  // CORS: allow the standalone desktop admin console (file:// / electron) to call the API.
+  // Security is enforced per-request by verifyAdminAuth, not by origin.
+  server.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    next();
+  });
 
-  // Initialize background scheduler for rotating notifications (10 AM, 2 PM, 10 PM, 12 AM)
-  await startNotificationScheduler();
+  // Initialize server-side push notification listeners using Firebase Admin SDK.
+  // Only when a service account is configured — without credentials the FCM/gRPC
+  // background timers crash the whole server process (NO_ADC_FOUND). Cloud Functions
+  // handle production push; the embedded listeners/scheduler are for privileged runs.
+  if (isServiceAccountConfigured) {
+    await startPushNotificationListeners();
+
+    // Initialize background scheduler for rotating notifications (10 AM, 2 PM, 10 PM, 12 AM)
+    await startNotificationScheduler();
+  } else {
+    console.log("[Server] Skipping embedded push listeners & scheduler (no FIREBASE_SERVICE_ACCOUNT_JSON). Cloud Functions handle push.");
+  }
+
+  // Initialize secure admin auth system (seed super admin + JWT secret cache)
+  try {
+    await ensureSeedSuperAdmin();
+    const cfg = await getAdminConfig();
+    await warmJwtSecret();
+    console.log("[AdminAuth] Secure admin system ready. Roles:", Object.keys(cfg.rolePermissions).join(", "));
+  } catch (e) {
+    console.warn("[AdminAuth] init warning:", (e as Error).message);
+  }
+
+  // =========================================================================
+  // ADMIN AUTH (v2): separate JWT sessions + mandatory TOTP 2FA + lockout
+  // =========================================================================
+
+  // Step 1: email + password (Firebase) + admin_users role check -> temp token
+  server.post("/api/admin/auth/login", async (req, res) => {
+    try {
+      const parsed = LoginStartSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid email or password format." });
+      }
+      const email = parsed.data.email.toLowerCase().trim();
+      const password = parsed.data.password;
+      const ip = clientIp(req as any);
+      const userAgent = String(req.headers["user-agent"] || "").slice(0, 200);
+
+      // Rate limit: per-IP AND per-account (brute-force protection)
+      const rl = checkLoginRate(ip, email);
+      if (!rl.allowed) {
+        return res.status(429).json({ error: rl.reason, retryAfterMin: rl.retryAfterMin });
+      }
+
+      // admin_users role check BEFORE Firebase hit (cheap + avoids user enumeration via timing)
+      const account = await findAdminByEmail(email);
+      if (!account || !account.isActive) {
+        recordFailedLogin(ip, email);
+        return res.status(401).json({ error: "Invalid credentials or admin account disabled." });
+      }
+
+      // Verify Firebase password via REST (no client SDK needed server-side)
+      const apiKey = "AIzaSyBR9e8eLDsyr5cHhwkcanRTbPqqjfGBBHU";
+      const fbRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, returnSecureToken: false })
+      });
+
+      if (!fbRes.ok) {
+        recordFailedLogin(ip, email);
+        return res.status(401).json({ error: "Invalid email or password." });
+      }
+
+      const fbData: any = await fbRes.json();
+      if (!fbData?.localId) {
+        recordFailedLogin(ip, email);
+        return res.status(401).json({ error: "Invalid credentials." });
+      }
+
+      // Ensure the admin_users doc points to the Firebase uid (self-heal seed)
+      if (account.uid !== fbData.localId) {
+        try {
+          const oldSnap = await db.collection("admin_users").doc(account.uid).get();
+          if (oldSnap.exists) {
+            await db.collection("admin_users").doc(fbData.localId).set(oldSnap.data(), { merge: true });
+            await db.collection("admin_users").doc(account.uid).delete();
+          }
+          account.uid = fbData.localId;
+        } catch { /* non-fatal */ }
+      }
+
+      clearFailedLogins(ip, email);
+
+      // 2FA pending: issue short-lived temp token (5 min)
+      const tempToken = createTemp2FaToken(account.uid);
+      return res.json({
+        success: true,
+        step: "2fa",
+        tempToken,
+        totpEnabled: account.totpEnabled,
+        email: account.email,
+        role: account.role
+      });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/auth/login:", err);
+      res.status(500).json({ error: "Login failed. Try again." });
+    }
+  });
+
+  // Step 2: TOTP verify -> full admin session JWT (separate secret from user auth)
+  server.post("/api/admin/auth/2fa", async (req, res) => {
+    try {
+      const parsed = Login2FaSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Enter the 6-digit code from Google Authenticator." });
+      }
+      const { tempToken, code } = parsed.data;
+      const ip = clientIp(req as any);
+
+      const pending = verifyTemp2FaToken(tempToken);
+      if (!pending) {
+        return res.status(401).json({ error: "Login session expired. Sign in again." });
+      }
+
+      const account = await getAdminAccount(pending.uid);
+      if (!account || !account.isActive) {
+        return res.status(403).json({ error: "Admin account disabled." });
+      }
+
+      // First-time 2FA enrollment: server generated secret at /2fa/setup, stored on account
+      if (!account.totpSecret) {
+        return res.status(400).json({ error: "2FA not initialized. Call /2fa/setup first.", step: "setup" });
+      }
+
+      if (!verifyTotp(account.totpSecret, code)) {
+        recordFailedLogin(ip, account.email);
+        const rl = checkLoginRate(ip, account.email);
+        if (!rl.allowed) {
+          return res.status(429).json({ error: rl.reason });
+        }
+        return res.status(401).json({ error: "Wrong 2FA code. Try again." });
+      }
+
+      clearFailedLogins(ip, account.email);
+
+      // Mark 2FA enabled after first successful verification
+      if (!account.totpEnabled) {
+        await db.collection("admin_users").doc(account.uid).set({ totpEnabled: true, totpEnabledAt: new Date().toISOString() }, { merge: true });
+        await writeAdminAudit({
+          adminId: account.uid, adminEmail: account.email,
+          action: "2fa.enabled", targetType: "admin_user", targetId: account.uid,
+          newValue: { totpEnabled: true }, ipAddress: ip,
+          note: "First successful TOTP verification."
+        });
+      }
+
+      const userAgent = String(req.headers["user-agent"] || "").slice(0, 200);
+      const sessionJwt = await createAdminSession(account, ip, userAgent);
+
+      await writeAdminAudit({
+        adminId: account.uid, adminEmail: account.email,
+        action: "auth.login", targetType: "admin_session", targetId: account.uid,
+        newValue: { role: account.role }, ipAddress: ip, userAgent,
+        note: "Admin signed in with password + TOTP."
+      });
+
+      return res.json({
+        success: true,
+        token: sessionJwt,
+        email: account.email,
+        role: account.role,
+        expiresInMinutes: 30
+      });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/auth/2fa:", err);
+      res.status(500).json({ error: "2FA verification failed." });
+    }
+  });
+
+  // 2FA setup: generate secret + QR (called when account has no secret yet)
+  server.post("/api/admin/auth/2fa/setup", async (req, res) => {
+    try {
+      const { tempToken } = req.body || {};
+      if (typeof tempToken !== "string" || tempToken.length < 10) {
+        return res.status(400).json({ error: "tempToken required (from login step)." });
+      }
+      const pending = verifyTemp2FaToken(tempToken);
+      if (!pending) return res.status(401).json({ error: "Login session expired. Sign in again." });
+
+      const account = await getAdminAccount(pending.uid);
+      if (!account) return res.status(404).json({ error: "Admin account not found." });
+      if (account.totpEnabled && account.totpSecret) {
+        return res.status(400).json({ error: "2FA already enabled. Use reset via another SUPER_ADMIN if locked out." });
+      }
+
+      const { secret, otpauthUrl } = generateTotpSecret(account.email);
+      await db.collection("admin_users").doc(account.uid).set({
+        totpSecret: secret,
+        totpEnabled: false,
+        totpSecretCreatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      const qrDataUrl = await QRCode.toDataURL(otpauthUrl, { width: 260, margin: 1 });
+      return res.json({ success: true, otpauthUrl, qrDataUrl, secret });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/auth/2fa/setup:", err);
+      res.status(500).json({ error: "2FA setup failed." });
+    }
+  });
+
+  // Session info
+  server.get("/api/admin/auth/me", adminAuthGuard(), async (req, res) => {
+    const s = (req as any).adminSession;
+    res.json({ success: true, email: s.email, role: s.role, uid: s.claims.uid });
+  });
+
+  // Logout (revoke session server-side)
+  server.post("/api/admin/auth/logout", adminAuthGuard(), async (req, res) => {
+    const s = (req as any).adminSession;
+    await revokeAdminSession(s.claims.sid, "logout");
+    const ip = clientIp(req as any);
+    await writeAdminAudit({
+      adminId: s.claims.uid, adminEmail: s.email,
+      action: "auth.logout", targetType: "admin_session", targetId: s.claims.sid,
+      ipAddress: ip
+    });
+    res.json({ success: true });
+  });
+
+  // =========================================================================
+  // ADMIN MANAGEMENT (SUPER_ADMIN only via admins.* permissions)
+  // =========================================================================
+
+  server.get("/api/admin/admins", adminAuthGuard(), requirePermission("admins.view"), async (req, res) => {
+    try {
+      const snap = await db.collection("admin_users").get();
+      const admins = snap.docs.map((d: any) => {
+        const v = d.data();
+        return {
+          uid: d.id,
+          email: v.email,
+          role: v.role,
+          isActive: v.isActive !== false,
+          totpEnabled: v.totpEnabled === true,
+          displayName: v.displayName || ""
+        };
+      });
+      res.json({ success: true, admins });
+    } catch (err: any) {
+      console.error("Error in GET /api/admin/admins:", err);
+      res.status(500).json({ error: err?.message || "Failed to list admins" });
+    }
+  });
+
+  server.post("/api/admin/admins/invite", adminAuthGuard(), requirePermission("admins.manage"), async (req, res) => {
+    try {
+      const parsed = InviteAdminSchema.safeParse(req.body || {});
+      if (!parsed.success) return res.status(400).json({ error: "Valid email + role required." });
+      const { email, role } = parsed.data;
+      const caller = (req as any).adminSession;
+      const ip = clientIp(req as any);
+
+      const existing = await findAdminByEmail(email.toLowerCase());
+      if (existing) return res.status(409).json({ error: "This email is already an admin." });
+
+      await db.collection("admin_users").add({
+        email: email.toLowerCase(),
+        role,
+        isActive: true,
+        totpSecret: null,
+        totpEnabled: false,
+        invitedBy: caller.email,
+        createdAt: new Date().toISOString()
+      });
+
+      await writeAdminAudit({
+        adminId: caller.claims.uid, adminEmail: caller.email,
+        action: "admins.invite", targetType: "admin_user", targetId: email.toLowerCase(),
+        newValue: { role, isActive: true }, ipAddress: ip,
+        note: "New admin invited. They enroll 2FA on first login."
+      });
+
+      res.json({ success: true, message: `${email} added as ${role}. They must sign up with this email in the app first, then log in here to enroll 2FA.` });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/admins/invite:", err);
+      res.status(500).json({ error: err?.message || "Failed to invite admin" });
+    }
+  });
+
+  server.post("/api/admin/admins/:uid/set-role", adminAuthGuard(), requirePermission("admins.manage"), async (req, res) => {
+    try {
+      const parsed = SetRoleSchema.safeParse(req.body || {});
+      if (!parsed.success) return res.status(400).json({ error: "Valid role required." });
+      const caller = (req as any).adminSession;
+      const ip = clientIp(req as any);
+      const target = await getAdminById(req.params.uid);
+      if (!target) return res.status(404).json({ error: "Admin not found." });
+
+      const oldRole = target.role;
+      await db.collection("admin_users").doc(req.params.uid).set({ role: parsed.data.role, updatedAt: new Date().toISOString() }, { merge: true });
+
+      await writeAdminAudit({
+        adminId: caller.claims.uid, adminEmail: caller.email,
+        action: "admins.set_role", targetType: "admin_user", targetId: target.email,
+        oldValue: { role: oldRole }, newValue: { role: parsed.data.role }, ipAddress: ip
+      });
+      res.json({ success: true, message: `${target.email} role: ${oldRole} → ${parsed.data.role}` });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/admins/:uid/set-role:", err);
+      res.status(500).json({ error: err?.message || "Failed to set role" });
+    }
+  });
+
+  server.post("/api/admin/admins/:uid/set-active", adminAuthGuard(), requirePermission("admins.manage"), async (req, res) => {
+    try {
+      const parsed = SetActiveSchema.safeParse(req.body || {});
+      if (!parsed.success) return res.status(400).json({ error: "isActive boolean required." });
+      const caller = (req as any).adminSession;
+      const ip = clientIp(req as any);
+      const target = await getAdminById(req.params.uid);
+      if (!target) return res.status(404).json({ error: "Admin not found." });
+      if (target.uid === caller.claims.uid && !parsed.data.isActive) {
+        return res.status(400).json({ error: "You cannot deactivate your own account." });
+      }
+
+      await db.collection("admin_users").doc(req.params.uid).set({ isActive: parsed.data.isActive, updatedAt: new Date().toISOString() }, { merge: true });
+
+      await writeAdminAudit({
+        adminId: caller.claims.uid, adminEmail: caller.email,
+        action: parsed.data.isActive ? "admins.activate" : "admins.deactivate",
+        targetType: "admin_user", targetId: target.email,
+        oldValue: { isActive: target.isActive }, newValue: { isActive: parsed.data.isActive }, ipAddress: ip
+      });
+      res.json({ success: true, message: `${target.email} ${parsed.data.isActive ? "activated" : "deactivated"}.` });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/admins/:uid/set-active:", err);
+      res.status(500).json({ error: err?.message || "Failed to update admin status" });
+    }
+  });
+
+  server.post("/api/admin/admins/:uid/reset-2fa", adminAuthGuard(), requirePermission("admins.manage"), async (req, res) => {
+    try {
+      const caller = (req as any).adminSession;
+      const ip = clientIp(req as any);
+      const target = await getAdminById(req.params.uid);
+      if (!target) return res.status(404).json({ error: "Admin not found." });
+
+      await db.collection("admin_users").doc(req.params.uid).set({
+        totpSecret: null,
+        totpEnabled: false,
+        totpResetAt: new Date().toISOString(),
+        totpResetBy: caller.email
+      }, { merge: true });
+
+      await writeAdminAudit({
+        adminId: caller.claims.uid, adminEmail: caller.email,
+        action: "2fa.reset", targetType: "admin_user", targetId: target.email,
+        oldValue: { totpEnabled: target.totpEnabled },
+        newValue: { totpEnabled: false, totpSecret: "DELETED" },
+        ipAddress: ip,
+        note: "2FA reset via console. Admin will re-enroll on next login."
+      });
+      res.json({ success: true, message: `${target.email} ka 2FA reset ho gaya. Wo next login par naya QR scan karega.` });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/admins/:uid/reset-2fa:", err);
+      res.status(500).json({ error: err?.message || "Failed to reset 2FA" });
+    }
+  });
+
+  // Admin config (role permissions, IP whitelist, VPN gate, threshold)
+  server.get("/api/admin/config", adminAuthGuard(), requirePermission("admins.view"), async (req, res) => {
+    const cfg = await getAdminConfig();
+    // Never expose the JWT secret
+    const { jwtSecret: _secret, ...safeConfig } = (await db.collection("admin_config").doc("config").get()).data() || {};
+    res.json({ success: true, config: cfg, defaults: DEFAULT_ROLE_PERMISSIONS });
+  });
+
+  server.post("/api/admin/config/update", adminAuthGuard(), requirePermission("admins.manage"), async (req, res) => {
+    try {
+      const parsed = ConfigUpdateSchema.safeParse(req.body || {});
+      if (!parsed.success) return res.status(400).json({ error: "Invalid config payload." });
+      const caller = (req as any).adminSession;
+      const ip = clientIp(req as any);
+      const before = await getAdminConfig();
+
+      await db.collection("admin_config").doc("config").set(parsed.data, { merge: true });
+      invalidateConfigCache();
+      const after = await getAdminConfig();
+
+      await writeAdminAudit({
+        adminId: caller.claims.uid, adminEmail: caller.email,
+        action: "config.update", targetType: "admin_config", targetId: "config",
+        oldValue: { ipWhitelist: before.ipWhitelist, vpnGateEnabled: before.vpnGateEnabled, payoutApprovalThresholdUsd: before.payoutApprovalThresholdUsd },
+        newValue: parsed.data, ipAddress: ip
+      });
+      res.json({ success: true, message: "Config updated.", config: after });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/config/update:", err);
+      res.status(500).json({ error: err?.message || "Failed to update config" });
+    }
+  });
 
   // =========================================================================
   // MONETIZATION ELIGIBILITY & ANTI-FRAUD API ROUTES (100% SERVER VALIDATED)
@@ -294,11 +748,19 @@ async function startServer() {
     }
   });
 
-  // 2. Record Verified Unique View (profile / story / chat / group) with 24h Deduplication & Anti-Fraud
+  // =========================================================================
+  // MONETIZATION ELIGIBILITY & ANTI-FRAUD API ROUTES (100% SERVER VALIDATED)
+  // =========================================================================
+  // NOTE: These are END-USER (creator/app) monetization routes — they use the
+  // Firebase user auth guard (verifyAuthToken), NOT the admin guard.
+  // Every /api/admin/* and /api/monetization/admin/* route uses adminAuthGuard
+  // + requirePermission (see §11-series below).
+
+  // 2. Record Verified Unique View (profile / story / chat / group)
   server.post("/api/monetization/record-view", verifyAuthToken, async (req, res) => {
     try {
       const authUser = (req as any).user;
-      const { creatorId, viewerUid: reqViewerUid, deviceId, sourceType, sourceId } = req.body;
+      const { creatorId, viewerUid: reqViewerUid, deviceId, sourceType, sourceId, watchTimeSeconds, watchCompletionPct } = req.body;
       const viewerUid = authUser.uid;
 
       if (!creatorId) {
@@ -333,6 +795,18 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error in POST /api/monetization/record-view:", err);
       res.status(500).json({ error: err?.message || "Failed to record view" });
+    }
+  });
+
+  // 2B. Run Idempotent Batch Earnings Calculation Job (Admin / Cron)
+  server.post("/api/monetization/run-batch-calculator", adminAuthGuard(), requirePermission("monetization.approve"), async (req, res) => {
+    try {
+      const { monthKey, forceAll } = req.body || {};
+      const batchResult = await aggregateCreatorEarningsBatch(db, { monthKey, forceAll });
+      res.json(batchResult);
+    } catch (err: any) {
+      console.error("Error in POST /api/monetization/run-batch-calculator:", err);
+      res.status(500).json({ error: err?.message || "Batch earnings calculation failed" });
     }
   });
 
@@ -557,7 +1031,7 @@ async function startServer() {
   });
 
   // 9. Admin Reports Management Endpoints (Composite index proof)
-  server.get("/api/admin/reports", verifyAdminAuth, async (req, res) => {
+  server.get("/api/admin/reports", adminAuthGuard(), requirePermission("reports.view"), async (req, res) => {
     try {
       const { status } = req.query;
       
@@ -588,11 +1062,23 @@ async function startServer() {
     }
   });
 
-  server.post("/api/admin/reports/:reportId/action", verifyAdminAuth, async (req, res) => {
+  server.post("/api/admin/reports/:reportId/action", adminAuthGuard(), requirePermission("reports.action"), async (req, res) => {
     try {
       const { reportId } = req.params;
-      const { action, adminNote } = req.body; // action: 'dismiss' | 'warn' | 'suspend_user' | 'delete_content'
-      const authUser = (req as any).user;
+      const { action, adminNote } = req.body || {}; // action: 'dismiss' | 'warn' | 'suspend_user' | 'delete_content'
+      const caller = (req as any).adminSession;
+      const ip = clientIp(req as any);
+
+      // Per-action fine-grained permission (SUPPORT dismiss kar sakta hai, delete/suspend nahi)
+      const actionPerm: Record<string, string> = {
+        dismiss: "reports.dismiss", warn: "users.warn", suspend_user: "users.suspend", delete_content: "content.delete"
+      };
+      if (!actionPerm[action]) {
+        return res.status(400).json({ error: "action must be dismiss | warn | suspend_user | delete_content" });
+      }
+      if (!hasPermission(caller, actionPerm[action])) {
+        return res.status(403).json({ error: `Your role (${caller.role}) lacks permission: ${actionPerm[action]}` });
+      }
 
       const reportDocRef = db.collection("reports").doc(reportId);
       const reportSnap = await reportDocRef.get();
@@ -632,11 +1118,21 @@ async function startServer() {
 
       await reportDocRef.set({
         status: action === 'dismiss' ? 'dismissed' : 'actioned',
-        reviewedBy: authUser.uid,
+        reviewedBy: caller.claims.uid,
+        reviewedByEmail: caller.email,
         reviewedAt: new Date().toISOString(),
         actionTaken: action,
         adminNote: adminNote || null
       }, { merge: true });
+
+      await writeAdminAudit({
+        adminId: caller.claims.uid, adminEmail: caller.email,
+        action: `reports.${action}`, targetType: String(reportData?.targetType || "report"),
+        targetId: String(reportData?.targetId || reportId),
+        oldValue: { reportStatus: reportData?.status || "pending" },
+        newValue: { reportStatus: action === 'dismiss' ? 'dismissed' : 'actioned', actionTaken: action },
+        ipAddress: ip, note: adminNote
+      });
 
       res.json({ success: true, message: `Report action '${action}' applied successfully.` });
     } catch (err: any) {
@@ -646,7 +1142,7 @@ async function startServer() {
   });
 
   // 10. Admin Payouts Management Endpoints
-  server.get("/api/admin/payouts", verifyAdminAuth, async (req, res) => {
+  server.get("/api/admin/payouts", adminAuthGuard(), requirePermission("payouts.view"), async (req, res) => {
     try {
       const snap = await db.collection("payouts").get();
       const payouts: any[] = [];
@@ -659,11 +1155,16 @@ async function startServer() {
     }
   });
 
-  server.post("/api/admin/payouts/:payoutId/action", verifyAdminAuth, async (req, res) => {
+  server.post("/api/admin/payouts/:payoutId/action", adminAuthGuard(), requirePermission("payouts.approve"), async (req, res) => {
     try {
+      const parsed = PayoutActionSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "action must be approve | mark_paid | reject; transactionReference ≤ 120 chars." });
+      }
       const { payoutId } = req.params;
-      const { action, transactionReference, adminNote } = req.body; // action: 'approve' | 'mark_paid' | 'reject'
-      const authUser = (req as any).user;
+      const { action, transactionReference, adminNote } = parsed.data;
+      const caller = (req as any).adminSession;
+      const ip = clientIp(req as any);
 
       const payoutDocRef = db.collection("payouts").doc(payoutId);
       const payoutSnap = await payoutDocRef.get();
@@ -671,26 +1172,93 @@ async function startServer() {
         return res.status(404).json({ error: "Payout record not found" });
       }
 
-      const payoutData = payoutSnap.data();
+      const payoutData = payoutSnap.data() || {};
       const creatorId = payoutData?.creatorId;
+      const amountUsd = typeof payoutData?.amountUsd === "number" ? payoutData.amountUsd : 0;
+      const oldStatus = payoutData?.status || "pending";
 
-      let newStatus = 'processing';
-      if (action === 'mark_paid') newStatus = 'paid';
-      if (action === 'reject') newStatus = 'rejected';
+      // -----------------------------------------------------------------
+      // MAKER-CHECKER: large payouts (>= admin_config threshold) need a
+      // second admin. First call creates a pending approval request; the
+      // actual payout only happens after another admin approves it.
+      // -----------------------------------------------------------------
+      const cfg = await getAdminConfig();
+      const threshold = cfg.payoutApprovalThresholdUsd;
+      const isDecidingAction = action === "mark_paid" || action === "approve";
+      if (isDecidingAction && amountUsd >= threshold) {
+        const existingSnap = await db.collection("pending_payout_approvals")
+          .where("payoutId", "==", payoutId)
+          .where("status", "==", "pending")
+          .limit(1).get();
+
+        if (existingSnap.empty) {
+          const reqRef = db.collection("pending_payout_approvals").doc();
+          await reqRef.set({
+            payoutId,
+            creatorId,
+            amountUsd,
+            thresholdUsd: threshold,
+            requestedAction: action,
+            requestedBy: caller.claims.uid,
+            requestedByEmail: caller.email,
+            status: "pending",
+            requestedAtMs: Date.now(),
+            requestedAt: new Date().toISOString()
+          });
+          await writeAdminAudit({
+            adminId: caller.claims.uid, adminEmail: caller.email,
+            action: "payouts.maker_request", targetType: "payout", targetId: payoutId,
+            oldValue: { status: oldStatus },
+            newValue: { pendingApprovalId: reqRef.id, amountUsd, thresholdUsd: threshold },
+            ipAddress: ip, note: adminNote || `Maker-checker: $${amountUsd.toFixed(2)} >= $${threshold.toFixed(2)} — doosre admin ki approval chahiye.`
+          });
+          return res.status(202).json({
+            success: true,
+            makerChecker: true,
+            message: `Payout $${amountUsd.toFixed(2)} threshold ($${threshold.toFixed(2)}) se bada hai — approval request ban gayi. Doosra admin (FINANCE_ADMIN/SUPER_ADMIN) approve karega, phir payout lagega.`
+          });
+        }
+        // pending request exists: only the checker (not requester) may complete it here
+        const pendingReq = existingSnap.docs[0].data();
+        if (pendingReq.requestedBy === caller.claims.uid || pendingReq.requestedByEmail === caller.email) {
+          return res.status(403).json({
+            error: "Maker-checker: aapne yeh payout request banayi hai, use khud approve nahi kar sakte. Doosra admin approve karega (ya pending-approvals se checker decide kare)."
+          });
+        }
+        // fall through — caller is the checker, proceed with the payout action
+      }
+      // Self-check guard even below threshold: reject-own-approval confusion se bacho
+      if (isDecidingAction && payoutData.processedBy === caller.claims.uid && oldStatus !== "pending") {
+        return res.status(409).json({ error: `Payout already ${oldStatus}.` });
+      }
+
+      let newStatus = "processing";
+      if (action === "mark_paid") newStatus = "paid";
+      if (action === "reject") newStatus = "rejected";
 
       await payoutDocRef.set({
         status: newStatus,
         processedAt: new Date().toISOString(),
-        processedBy: authUser.uid,
+        processedBy: caller.claims.uid,
+        processedByEmail: caller.email,
         transactionReference: transactionReference || null,
         adminNote: adminNote || null
       }, { merge: true });
 
       // Mark creator as manually reviewed
-      if ((action === 'mark_paid' || action === 'approve') && creatorId) {
+      if ((action === "mark_paid" || action === "approve") && creatorId) {
         const statusRef = db.collection("users").doc(creatorId).collection("monetization").doc("status");
         await statusRef.set({ manuallyReviewed: true }, { merge: true });
       }
+
+      await writeAdminAudit({
+        adminId: caller.claims.uid, adminEmail: caller.email,
+        action: `payouts.${action === "reject" ? "reject" : "approve"}`,
+        targetType: "payout", targetId: payoutId,
+        oldValue: { status: oldStatus, amountUsd },
+        newValue: { status: newStatus, transactionReference: transactionReference || null },
+        ipAddress: ip, note: adminNote
+      });
 
       res.json({ success: true, message: `Payout status updated to ${newStatus}` });
     } catch (err: any) {
@@ -700,7 +1268,7 @@ async function startServer() {
   });
 
   // 11. Admin Manual Approval Endpoint for Creator Monetization
-  server.get("/api/monetization/admin/creators", verifyAdminAuth, async (req, res) => {
+  server.get("/api/monetization/admin/creators", adminAuthGuard(), requirePermission("monetization.view"), async (req, res) => {
     try {
       const usersSnap = await db.collection("users").get();
       const creatorsList: any[] = [];
@@ -782,7 +1350,7 @@ async function startServer() {
     }
   });
 
-  server.post("/api/monetization/admin/approve-creator", verifyAdminAuth, async (req, res) => {
+  server.post("/api/monetization/admin/approve-creator", adminAuthGuard(), requirePermission("monetization.approve"), async (req, res) => {
     try {
       const { creatorId, status = 'Approved', note } = req.body;
       if (!creatorId) {
@@ -842,7 +1410,7 @@ async function startServer() {
       await userRef.set(userUpdate, { merge: true });
 
       await createAuditLog(db, {
-        userId: (req as any).user.uid,
+        userId: (req as any).adminSession?.claims?.uid || "unknown_admin",
         targetUserId: creatorId,
         timestamp: new Date().toISOString(),
         timestampMs: Date.now(),
@@ -870,7 +1438,7 @@ async function startServer() {
   // =========================================================================
 
   // List all users with moderation-relevant fields (search + status filter in-memory, no index needed)
-  server.get("/api/admin/users", verifyAdminAuth, async (req, res) => {
+  server.get("/api/admin/users", adminAuthGuard(), requirePermission("users.view"), async (req, res) => {
     try {
       const search = String(req.query.search || '').toLowerCase().trim();
       const statusFilter = String(req.query.status || 'all').toLowerCase();
@@ -936,19 +1504,29 @@ async function startServer() {
   });
 
   // Suspend / Ban / Reactivate / Warn a user account (audit-logged, self-action guarded)
-  server.post("/api/admin/users/:uid/action", verifyAdminAuth, async (req, res) => {
+  server.post("/api/admin/users/:uid/action", adminAuthGuard(), requirePermission("users.manage"), async (req, res) => {
     try {
+      const parsed = UserActionSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid action. Use suspend | ban | reactivate | warn (note ≤ 500 chars)." });
+      }
       const { uid } = req.params;
-      const { action, note } = req.body; // action: 'suspend' | 'ban' | 'reactivate' | 'warn'
-      const adminUser = (req as any).user;
+      const { action, note } = parsed.data;
+      const caller = (req as any).adminSession;
+      const ip = clientIp(req as any);
 
-      if (!uid) return res.status(400).json({ error: "uid is required" });
-      if (!['suspend', 'ban', 'reactivate', 'warn'].includes(action)) {
-        return res.status(400).json({ error: "Invalid action. Use suspend | ban | reactivate | warn" });
+      // Fine-grained per-action permission (reactivate is a softer power than ban)
+      const perActionPerm: Record<string, string> = {
+        suspend: "users.suspend", ban: "users.ban", reactivate: "users.reactivate", warn: "users.warn"
+      };
+      if (!hasPermission(caller, perActionPerm[action])) {
+        return res.status(403).json({ error: `Your role (${caller.role}) lacks permission: ${perActionPerm[action]}` });
       }
 
+      if (!uid) return res.status(400).json({ error: "uid is required" });
+
       // Guard: an admin cannot moderate their own account
-      if (adminUser.uid === uid) {
+      if (caller.claims.uid === uid) {
         return res.status(400).json({ error: "You cannot moderate your own account." });
       }
 
@@ -957,6 +1535,8 @@ async function startServer() {
       if (!userSnap.exists) {
         return res.status(404).json({ error: "User not found" });
       }
+      const before = userSnap.data() || {};
+      const oldValue = { accountStatus: before.accountStatus ?? before.status ?? null, isSuspended: before.isSuspended ?? false, hasWarning: before.hasWarning ?? false, monetizationStatus: before.monetizationStatus ?? null };
 
       const nowIso = new Date().toISOString();
       const updateData: any = {};
@@ -998,7 +1578,7 @@ async function startServer() {
       await userDocRef.set(updateData, { merge: true });
 
       await createAuditLog(db, {
-        userId: adminUser.uid,
+        userId: caller.claims.uid,
         targetUserId: uid,
         timestamp: nowIso,
         timestampMs: Date.now(),
@@ -1007,6 +1587,14 @@ async function startServer() {
         eventType: 'fraud_check',
         verificationStatus: action === 'warn' ? 'FLAGGED' : 'PASSED',
         reason: `Admin account action '${action}' applied.${note ? ' Note: ' + note : ''}`
+      });
+
+      await writeAdminAudit({
+        adminId: caller.claims.uid, adminEmail: caller.email,
+        action: `users.${action}`, targetType: "user", targetId: uid,
+        oldValue,
+        newValue: { accountStatus: updateData.accountStatus ?? null, isSuspended: updateData.isSuspended ?? null, hasWarning: updateData.hasWarning ?? null, monetizationStatus: updateData.monetizationStatus ?? null },
+        ipAddress: ip, note
       });
 
       res.json({ success: true, message: `User ${uid} action '${action}' applied successfully.`, action });
@@ -1020,7 +1608,7 @@ async function startServer() {
   // 11c. ADMIN MONETIZATION REPORT (Platform-wide verified views & earnings)
   // =========================================================================
 
-  server.get("/api/admin/monetization-report", verifyAdminAuth, async (req, res) => {
+  server.get("/api/admin/monetization-report", adminAuthGuard(), requirePermission("monetization.view"), async (req, res) => {
     try {
       const now = new Date();
       const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -1135,6 +1723,427 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error in GET /api/admin/monetization-report:", err);
       res.status(500).json({ error: err?.message || "Failed to build monetization report" });
+    }
+  });
+
+  // =========================================================================
+  // 11e. ANALYTICS, DATING MODERATION, MAKER-CHECKER APPROVALS, AUDIT VIEWER
+  // =========================================================================
+
+  // Analytics: DAU/MAU, content, earnings
+  server.get("/api/admin/analytics", adminAuthGuard(), requirePermission("analytics.view"), async (req, res) => {
+    try {
+      const now = Date.now();
+      const dayMs = 24 * 60 * 60 * 1000;
+      const monthMs = 30 * dayMs;
+
+      let dau = 0, wau = 0, mau = 0, totalUsers = 0;
+      try {
+        const usersSnap = await db.collection("users").get();
+        usersSnap.forEach((d: any) => {
+          totalUsers++;
+          const u = d.data();
+          let lastMs = 0;
+          if (u.lastActiveAt?.seconds) lastMs = u.lastActiveAt.seconds * 1000;
+          else if (typeof u.lastActiveAtMs === "number") lastMs = u.lastActiveAtMs;
+          else if (typeof u.lastActiveAt === "string") lastMs = new Date(u.lastActiveAt).getTime() || 0;
+          if (now - lastMs < dayMs) dau++;
+          if (now - lastMs < 7 * dayMs) wau++;
+          if (now - lastMs < monthMs) mau++;
+        });
+      } catch { /* ignore */ }
+
+      let totalViews = 0;
+      try {
+        const snap = await db.collection("monetization_views").get();
+        totalViews = snap.size;
+      } catch { /* ignore */ }
+
+      let totalPaidOut = 0;
+      let paidCount = 0;
+      let flaggedCount = 0;
+      try {
+        const payoutsSnap = await db.collection("payouts").get();
+        payoutsSnap.forEach((d: any) => {
+          const p = d.data();
+          if (p.status === "paid") { totalPaidOut += Number(p.amountUsd) || 0; paidCount++; }
+        });
+        const flaggedSnap = await db.collection("flagged_content").where("status", "==", "open").get();
+        flaggedCount = flaggedSnap.size;
+      } catch { /* ignore */ }
+
+      res.json({
+        success: true,
+        dau, wau, mau, totalUsers,
+        stickiness: mau > 0 ? Math.round((dau / mau) * 100) : 0,
+        totalViews,
+        totalPaidOutUsd: Number(totalPaidOut.toFixed(2)),
+        paidPayoutCount: paidCount,
+        flaggedContentCount: flaggedCount,
+        generatedAt: new Date().toISOString()
+      });
+    } catch (err: any) {
+      console.error("Error in GET /api/admin/analytics:", err);
+      res.status(500).json({ error: err?.message || "Failed to compute analytics" });
+    }
+  });
+
+  // Dating moderation: flagged profiles list
+  server.get("/api/admin/dating-flags", adminAuthGuard(), requirePermission("dating.view"), async (req, res) => {
+    try {
+      const snap = await db.collection("flagged_content").orderBy("createdAtMs", "desc").limit(200).get();
+      const flags = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+      res.json({ success: true, flags });
+    } catch (err: any) {
+      console.error("Error in GET /api/admin/dating-flags:", err);
+      res.status(500).json({ error: err?.message || "Failed to fetch dating flags" });
+    }
+  });
+
+  // Dating moderation: act on a flag (confirm fake / clear / ban user) — audit logged
+  server.post("/api/admin/dating-flags/:flagId/action", adminAuthGuard(), requirePermission("dating.action"), async (req, res) => {
+    try {
+      const parsed = DatingFlagActionSchema.safeParse(req.body || {});
+      if (!parsed.success) return res.status(400).json({ error: "Invalid action. Use confirm_fake | clear_flag | ban_user." });
+      const caller = (req as any).adminSession;
+      const ip = clientIp(req as any);
+
+      const flagRef = db.collection("flagged_content").doc(req.params.flagId);
+      const flagSnap = await flagRef.get();
+      if (!flagSnap.exists) return res.status(404).json({ error: "Flag not found." });
+      const flagData = flagSnap.data() || {};
+
+      if (parsed.data.action === "confirm_fake") {
+        await flagRef.set({ status: "confirmed_fake", reviewedBy: caller.email, reviewedAtMs: Date.now(), reviewNote: parsed.data.note || null }, { merge: true });
+        if (flagData.targetUserId) {
+          await db.collection("users").doc(flagData.targetUserId).set({
+            isFake: true,
+            flaggedAsFake: true,
+            fakeFlagReason: parsed.data.note || "Confirmed fake by moderation",
+            fakeFlaggedAtMs: Date.now()
+          }, { merge: true });
+        }
+      } else if (parsed.data.action === "clear_flag") {
+        await flagRef.set({ status: "cleared", reviewedBy: caller.email, reviewedAtMs: Date.now(), reviewNote: parsed.data.note || null }, { merge: true });
+      } else if (parsed.data.action === "ban_user") {
+        if (flagData.targetUserId) {
+          await db.collection("users").doc(flagData.targetUserId).set({
+            accountStatus: "banned",
+            status: "banned",
+            isSuspended: true,
+            suspendedAt: new Date().toISOString(),
+            suspendedReason: parsed.data.note || "Banned via dating moderation (fake profile)",
+            monetizationStatus: "Suspended"
+          }, { merge: true });
+        }
+        await flagRef.set({ status: "banned", reviewedBy: caller.email, reviewedAtMs: Date.now() }, { merge: true });
+      }
+
+      await writeAdminAudit({
+        adminId: caller.claims.uid, adminEmail: caller.email,
+        action: `dating.${parsed.data.action}`,
+        targetType: "dating_profile",
+        targetId: String(flagData.targetUserId || req.params.flagId),
+        oldValue: { flagStatus: flagData.status || "open" },
+        newValue: { action: parsed.data.action, note: parsed.data.note || null },
+        ipAddress: ip, note: parsed.data.note
+      });
+
+      res.json({ success: true, message: `Flag ${parsed.data.action} completed.` });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/dating-flags/:flagId/action:", err);
+      res.status(500).json({ error: err?.message || "Failed to process flag" });
+    }
+  });
+
+  // Maker-checker: list pending payout approvals
+  server.get("/api/admin/pending-approvals", adminAuthGuard(), requirePermission("payouts.view"), async (req, res) => {
+    try {
+      const snap = await db.collection("pending_payout_approvals").orderBy("requestedAtMs", "desc").limit(100).get();
+      const approvals = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+      res.json({ success: true, approvals });
+    } catch (err: any) {
+      console.error("Error in GET /api/admin/pending-approvals:", err);
+      res.status(500).json({ error: err?.message || "Failed to fetch pending approvals" });
+    }
+  });
+
+  // Maker-checker: decide (approve/reject). Requester cannot approve own request.
+  server.post("/api/admin/pending-approvals/:id/decision", adminAuthGuard(), requirePermission("payouts.approve"), async (req, res) => {
+    try {
+      const parsed = DecisionSchema.safeParse(req.body || {});
+      if (!parsed.success) return res.status(400).json({ error: "decision must be approved | rejected." });
+      const caller = (req as any).adminSession;
+      const ip = clientIp(req as any);
+
+      const ref = db.collection("pending_payout_approvals").doc(req.params.id);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: "Approval request not found." });
+      const data = snap.data() || {};
+
+      if (data.status !== "pending") {
+        return res.status(409).json({ error: `Already decided (${data.status}).` });
+      }
+      // MAKER-CHECKER: requester cannot decide own request
+      if (data.requestedBy === caller.claims.uid || data.requestedByEmail === caller.email) {
+        return res.status(403).json({ error: "Maker-checker: aap apni hi approval request decide nahi kar sakte. Doosra FINANCE_ADMIN/SUPER_ADMIN karega." });
+      }
+
+      await ref.set({
+        status: parsed.data.decision,
+        decidedBy: caller.email,
+        decidedByUid: caller.claims.uid,
+        decidedAtMs: Date.now(),
+        decisionNote: parsed.data.note || null
+      }, { merge: true });
+
+      // On approve: apply the underlying payout action
+      if (parsed.data.decision === "approved" && data.payoutId) {
+        const payoutRef = db.collection("payouts").doc(data.payoutId);
+        const payoutSnap = await payoutRef.get();
+        if (payoutSnap.exists) {
+          await payoutRef.set({
+            status: "paid",
+            processedAt: new Date().toISOString(),
+            processedBy: caller.email,
+            approvalFlow: "maker-checker",
+            approvedVia: req.params.id
+          }, { merge: true });
+        }
+      }
+
+      await writeAdminAudit({
+        adminId: caller.claims.uid, adminEmail: caller.email,
+        action: `payouts.checker_${parsed.data.decision}`,
+        targetType: "payout_approval", targetId: req.params.id,
+        oldValue: { status: "pending", amountUsd: data.amountUsd, requestedBy: data.requestedByEmail },
+        newValue: { status: parsed.data.decision, payoutId: data.payoutId },
+        ipAddress: ip, note: parsed.data.note
+      });
+
+      res.json({ success: true, message: `Approval ${parsed.data.decision}.` });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/pending-approvals/:id/decision:", err);
+      res.status(500).json({ error: err?.message || "Failed to record decision" });
+    }
+  });
+
+  // Audit log viewer (read-only, immutable trail)
+  server.get("/api/admin/audit-logs", adminAuthGuard(), requirePermission("audit.view"), async (req, res) => {
+    try {
+      const limitN = Math.min(300, Math.max(1, parseInt(String(req.query.limit || "100"), 10) || 100));
+      let q: any = db.collection("admin_audit_logs").orderBy("timestampMs", "desc").limit(limitN);
+      const action = String(req.query.action || "").trim();
+      if (action) {
+        q = db.collection("admin_audit_logs").where("action", ">=", action).where("action", "<=", action + "\uf8ff").orderBy("action").orderBy("timestampMs", "desc").limit(limitN);
+      }
+      const snap = await q.get();
+      const logs = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+      res.json({ success: true, logs });
+    } catch (err: any) {
+      console.error("Error in GET /api/admin/audit-logs:", err);
+      res.status(500).json({ error: err?.message || "Failed to fetch audit logs" });
+    }
+  });
+
+  // =========================================================================
+  // 11d. ADMIN DASHBOARD OVERVIEW + CONTENT MODERATION (standalone desktop console)
+  // =========================================================================
+
+  // Platform overview stats for the admin dashboard home
+  server.get("/api/admin/overview", adminAuthGuard(), requirePermission("analytics.view"), async (req, res) => {
+    try {
+      const now = new Date();
+      const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const dayAgoMs = Date.now() - 24 * 60 * 60 * 1000;
+
+      const usersSnap = await db.collection("users").get();
+      let totalUsers = 0;
+      let suspendedUsers = 0;
+      let bannedUsers = 0;
+      let warnedUsers = 0;
+      usersSnap.forEach((d: any) => {
+        totalUsers++;
+        const u = d.data();
+        const st = String(u.accountStatus || u.status || 'active').toLowerCase();
+        if (st === 'suspended') suspendedUsers++;
+        else if (st === 'banned') bannedUsers++;
+        if (u.hasWarning === true) warnedUsers++;
+      });
+
+      let storiesCount = 0;
+      let newStories24h = 0;
+      try {
+        const storiesSnap = await db.collection("stories").get();
+        storiesSnap.forEach((d: any) => {
+          storiesCount++;
+          const s = d.data();
+          let ms = 0;
+          if (s.createdAt?.seconds) ms = s.createdAt.seconds * 1000;
+          else if (typeof s.createdAtMs === 'number') ms = s.createdAtMs;
+          else if (typeof s.createdAt === 'string') ms = new Date(s.createdAt).getTime() || 0;
+          if (ms >= dayAgoMs) newStories24h++;
+        });
+      } catch (e) { /* ignore */ }
+
+      let pendingReports = 0;
+      let totalReports = 0;
+      try {
+        const reportsSnap = await db.collection("reports").get();
+        reportsSnap.forEach((d: any) => {
+          totalReports++;
+          if (d.data()?.status === 'pending') pendingReports++;
+        });
+      } catch (e) { /* ignore */ }
+
+      let monthViews = 0;
+      try {
+        const viewsSnap = await db.collection("monetization_views")
+          .where("monthKey", "==", monthKey)
+          .where("verificationStatus", "==", "PASSED")
+          .get();
+        monthViews = viewsSnap.size;
+      } catch (e) { /* ignore */ }
+
+      let pendingPayouts = 0;
+      let pendingPayoutUsd = 0;
+      try {
+        const payoutsSnap = await db.collection("payouts").get();
+        payoutsSnap.forEach((d: any) => {
+          const p = d.data();
+          if (p.status === 'requested' || p.status === 'processing') {
+            pendingPayouts++;
+            pendingPayoutUsd += Number(p.amountUsd) || 0;
+          }
+        });
+      } catch (e) { /* ignore */ }
+
+      res.json({
+        success: true,
+        totalUsers,
+        suspendedUsers,
+        bannedUsers,
+        warnedUsers,
+        storiesCount,
+        newStories24h,
+        pendingReports,
+        totalReports,
+        monthViews,
+        pendingPayouts,
+        pendingPayoutUsd: Number(pendingPayoutUsd.toFixed(2)),
+        generatedAt: new Date().toISOString()
+      });
+    } catch (err: any) {
+      console.error("Error in GET /api/admin/overview:", err);
+      res.status(500).json({ error: err?.message || "Failed to build overview" });
+    }
+  });
+
+  // All stories (posts) with author info for content moderation
+  server.get("/api/admin/stories", adminAuthGuard(), requirePermission("content.view"), async (req, res) => {
+    try {
+      const search = String(req.query.search || '').toLowerCase().trim();
+      const storiesSnap = await db.collection("stories").get();
+
+      // Author info map
+      const userMap: Record<string, { username: string; displayName: string }> = {};
+      try {
+        const usersSnap = await db.collection("users").get();
+        usersSnap.forEach((d: any) => {
+          const u = d.data();
+          userMap[d.id] = {
+            username: u.username || 'unknown',
+            displayName: u.displayName || u.name || u.username || 'Anonymous'
+          };
+        });
+      } catch (e) { /* ignore */ }
+
+      const stories: any[] = [];
+      storiesSnap.forEach((d: any) => {
+        const s = d.data();
+        const authorUid = s.authorUid || '';
+        let createdMs = 0;
+        if (s.createdAt?.seconds) createdMs = s.createdAt.seconds * 1000;
+        else if (typeof s.createdAtMs === 'number') createdMs = s.createdAtMs;
+        else if (typeof s.createdAt === 'string') createdMs = new Date(s.createdAt).getTime() || 0;
+
+        stories.push({
+          id: d.id,
+          authorUid,
+          authorUsername: userMap[authorUid]?.username || 'unknown',
+          authorDisplayName: userMap[authorUid]?.displayName || 'Unknown',
+          caption: s.caption || s.text || '',
+          mediaUrl: s.mediaUrl || s.imageUrl || '',
+          audience: s.audience || 'everyone',
+          likesCount: s.likesCount || (Array.isArray(s.likes) ? s.likes.length : 0) || 0,
+          viewsCount: s.viewsCount || (Array.isArray(s.viewedBy) ? s.viewedBy.length : 0) || 0,
+          createdAtMs: createdMs,
+          status: s.status || 'active'
+        });
+      });
+
+      stories.sort((a, b) => b.createdAtMs - a.createdAtMs);
+
+      let result = stories;
+      if (search) {
+        result = stories.filter((s) =>
+          s.authorUsername.toLowerCase().includes(search) ||
+          s.authorDisplayName.toLowerCase().includes(search) ||
+          String(s.caption).toLowerCase().includes(search) ||
+          s.id.toLowerCase().includes(search)
+        );
+      }
+
+      res.json({ success: true, stories: result.slice(0, 300), total: stories.length });
+    } catch (err: any) {
+      console.error("Error in GET /api/admin/stories:", err);
+      res.status(500).json({ error: err?.message || "Failed to fetch stories" });
+    }
+  });
+
+  // Delete a story (content moderation) — audit logged
+  server.post("/api/admin/stories/:storyId/delete", adminAuthGuard(), requirePermission("content.delete"), async (req, res) => {
+    try {
+      const { storyId } = req.params;
+      const { note } = (req.body || {}) as { note?: string };
+      const caller = (req as any).adminSession;
+      const ip = clientIp(req as any);
+
+      const storyRef = db.collection("stories").doc(storyId);
+      const storySnap = await storyRef.get();
+      if (!storySnap.exists) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+
+      const storyData = storySnap.data();
+
+      // Hard-delete the story document
+      await storyRef.delete();
+
+      await createAuditLog(db, {
+        userId: caller.claims.uid,
+        targetUserId: storyData?.authorUid || 'unknown',
+        timestamp: new Date().toISOString(),
+        timestampMs: Date.now(),
+        deviceId: 'admin_desktop',
+        ipHash: 'admin_ip',
+        eventType: 'fraud_check',
+        verificationStatus: 'PASSED',
+        reason: `Admin deleted story ${storyId}.${note ? ' Note: ' + note : ''}`
+      });
+
+      await writeAdminAudit({
+        adminId: caller.claims.uid, adminEmail: caller.email,
+        action: "content.delete_story", targetType: "story", targetId: storyId,
+        oldValue: { authorUid: storyData?.authorUid || null, caption: String(storyData?.caption || "").slice(0, 200) },
+        newValue: { deleted: true },
+        ipAddress: ip, note
+      });
+
+      res.json({ success: true, message: `Story ${storyId} deleted successfully.` });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/stories/:storyId/delete:", err);
+      res.status(500).json({ error: err?.message || "Failed to delete story" });
     }
   });
 

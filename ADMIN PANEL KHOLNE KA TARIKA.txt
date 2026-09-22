@@ -1,0 +1,89 @@
+═══════════════════════════════════════════════════════
+   ANVIO TALK — ADMIN PANEL KHOLNE KA TARIKA
+═══════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────┐
+│  ROZ PANEL KHOLNE KE LIYE (2 STEPS)                 │
+└─────────────────────────────────────────────────────┘
+
+STEP 1:  Project folder kholo
+         (jahan yeh file hai — "inspired-ui_ux-playground (26)")
+
+STEP 2:  "start-admin.bat" file par DOUBLE-CLICK karo
+         ↓
+         Ek black window khulegi (yeh server hai —
+         ise BAND MAT karna, chhota sa minimize kar dena)
+         ↓
+         10 second me "Anvio Talk — Admin Console"
+         naam ki WINDOW khul jayegi
+         ↓
+         Login karo:
+         Email:    kartiksingh7870n@gmail.com
+         Password: (wahi jo aapke Firebase account ka hai)
+         ↓
+         BAS! Poora admin dashboard khul gaya 🎉
+
+┌─────────────────────────────────────────────────────┐
+│  PANEL BAND KARNE KE LIYE                           │
+└─────────────────────────────────────────────────────┘
+
+  • Admin window me upar-right ✕ (cross) dabao
+  • Phir black server window bhi band kar do
+
+┌─────────────────────────────────────────────────────┐
+│  PANEL ME KYA-KYA HAI                               │
+└─────────────────────────────────────────────────────┘
+
+  📊 DASHBOARD     → Poore app ka summary (users, posts,
+                     reports, paisa) — sab ek nazar me
+
+  👥 USERS         → Saare users ki list
+                     • Kisi ko block karna hai → "Suspend"
+                     • Hamesha ke liye block → "Ban"
+                     • Galti se block ho gaya → "Reactivate"
+
+  🚩 REPORTS       → Jo log ne report kiya
+                     • Report galat hai → "Dismiss"
+                     • Reported POST hatana hai → "Delete Post"
+                     • Reported USER ko hatana hai → "Suspend User"
+
+  🖼️ POSTS/STORIES → App ki saari posts photo ke saath
+                     • Koi ganda post dikhe → "Delete" button
+
+  💰 PAYOUTS       → Creators ke paise nikalne ke requests
+                     • Paisa bhejne ke baad UTR daalo → "Mark Paid"
+                     • Request galat hai → "Decline"
+
+  📈 MONETIZATION  → Kis creator ke kitne views/ paisa bana
+
+┌─────────────────────────────────────────────────────┐
+│  DHYAN RAKHNE WALI BAATEIN                          │
+└─────────────────────────────────────────────────────┘
+
+  ✓ Internet chalu rehna chahiye (data Firebase se aata hai)
+  ✓ Login sirf aapke 2 emails se hota hai — koi aur
+    nahi khul sakta (kartiksingh7870n@gmail.com aur
+    admin@anviotalk.com)
+  ✓ Har aapka kaam server par record hota hai (audit log)
+  ✓ "Ban" aur "Delete" wapas NAHI aata — soch samajh kar!
+
+┌─────────────────────────────────────────────────────┐
+│  AGAR DIKKAT AAYE                                   │
+└─────────────────────────────────────────────────────┘
+
+  Problem: Window khuli par "Server offline" dikh raha
+  Solution: Black window dekho — shayad server band ho
+            gaya. Sab band karo aur start-admin.bat
+            dobara double-click karo.
+
+  Problem: Login me "wrong password" aa raha
+  Solution: Yeh wahi password hai jo aapke app ke
+            login me use hota hai (Firebase password)
+
+  Problem: Kuch load nahi ho raha
+  Solution: Black server window band karke dobara
+            start-admin.bat chalao
+
+═══════════════════════════════════════════════════════
+     Made for Anvio Talk · Admin Console v1.0
+═══════════════════════════════════════════════════════
