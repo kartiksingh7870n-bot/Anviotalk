@@ -1,8 +1,12 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Anvio Talk
 
-# Run and deploy your AI Studio app
+Social app with secure admin console (RBAC + TOTP 2FA + audit trail) and creator monetization.
+
+- Client: React + Vite (`src/`)
+- Server: Express + Firebase Admin SDK (`server.ts`)
+- Admin console: `public/admin/index.html` (web) + `admin-desktop/` (Electron)
+
+> Original placeholder README (AI Studio banner) removed in favor of this project overview.
 
 This contains everything you need to run your app locally.
 
@@ -48,3 +52,32 @@ Even though the Firebase Admin SDK on the server bypasses security rules, client
 
 An alternative Cloud Functions implementation is also maintained in the `functions/` folder. Note that deploying Cloud Functions requires upgrading your Firebase project to the **Blaze** plan.
 
+## About Anvio Talk
+
+Chat • Stories • Groups • Discover • Creator Mode • Earn • 100% Secure
+
+Anvio Talk is a next-generation social communication app that brings together instant messaging, story sharing, group chats, profile discovery, creator tools, and earning opportunities – all in one secure and beautifully designed platform.
+
+| Feature | Description |
+|---|---|
+| 💬 Instant Chat | Real-time messaging with read receipts, typing indicators, emoji reactions, and media sharing. |
+| 📸 Story Feed | Share photos and videos that disappear after 24 hours. |
+| 👥 Groups | Create and manage groups with up to 500 members. |
+| 🔍 Profile Discovery | Explore new profiles, follow creators, and grow your network. |
+| ⭐ Creator Mode | Exclusive tools for content creators – analytics, verification badges, priority support. |
+| 💰 Earning | Monetize your content — verified views, monthly payouts. |
+| 🔒 100% Secure | Hardened admin console, Firestore rules lockdown, audit logging. |
+| 📞 Voice & Video Calls | Crystal-clear HD calls with noise cancellation. |
+| 🌓 Dark / Light Mode | Easy on the eyes day or night. |
+| 📱 Multi-Platform | Android app + web app. |
+
+## Connect With Us
+
+| Platform | Link |
+|---|---|
+| 📸 Instagram | @anviotalk |
+| 📘 Facebook | Anvio Talk |
+| ▶️ YouTube | @Anviotalk |
+| 🔗 LinkedIn | anviotalk |
+
+**Contact:** support@anviotalk.com · Website: https://anviotalk.com
