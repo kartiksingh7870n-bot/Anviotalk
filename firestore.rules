@@ -1,0 +1,212 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Users: get is open for guest share preview links, list/search is restricted to authenticated users
+    // SECURITY: server/admin-only fields are blocked from client writes. They are managed
+    // exclusively by the backend via the Firebase Admin SDK (which bypasses these rules).
+    function isSafeUserUpdate() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny([
+          'isAdmin',
+          'role',
+          'isMonetized',
+          'monetizationStatus',
+          'monetizationApprovedAt',
+          'monetizationRejectedAt',
+          'unpaidBalanceUsd',
+          'isFake',
+          'flaggedAsFake',
+          'isSuspended',
+          'suspendedAt',
+          'suspendedReason',
+          'hasWarning',
+          'warningMessage',
+          'warnedAt',
+          'adImpressionsCount'
+        ]);
+    }
+
+    match /users/{userId} {
+      allow get: if true;                  // needed so profile share links work for guests
+      allow list: if isSignedIn();         // list/search queries require authenticated user
+      allow create: if isOwner(userId) && !('isAdmin' in request.resource.data) && !('role' in request.resource.data);
+      allow update: if isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin', 'role']) && isSafeUserUpdate();
+      allow delete: if isOwner(userId);
+
+      // Monetization subcollection: server-only (status, payouts). Clients may read their own.
+      match /monetization/{document=**} {
+        allow read: if isOwner(userId);
+        allow write: if false;
+      }
+
+      match /{document=**} {
+        allow read: if isSignedIn();
+        // Block client writes into the monetization subcollection (server-only),
+        // and the blocked server-only fields anywhere else under the user doc tree.
+        allow write: if isOwner(userId)
+          && request.path[2] != 'monetization'
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'isAdmin',
+            'role',
+            'isMonetized',
+            'monetizationStatus',
+            'monetizationApprovedAt',
+            'monetizationRejectedAt',
+            'unpaidBalanceUsd',
+            'isFake',
+            'flaggedAsFake',
+            'isSuspended',
+            'suspendedAt',
+            'suspendedReason',
+            'hasWarning',
+            'warningMessage',
+            'warnedAt',
+            'adImpressionsCount'
+          ]);
+      }
+    }
+
+    match /usernames/{username} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // Stories: public read for share previews
+    match /stories/{storyId} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.authorUid == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.authorUid == request.auth.uid || 
+        request.resource.data.diff(resource.data).affectedKeys().hasAny(['viewedBy', 'likes', 'likesCount', 'commentsCount', 'sharesCount'])
+      );
+      allow delete: if isSignedIn() && resource.data.authorUid == request.auth.uid;
+      
+      // Subcollections (comments/likes on stories)
+      match /{document=**} {
+        allow read: if true;
+        allow create: if isSignedIn() && (
+          request.resource.data.authorUid == request.auth.uid || 
+          request.resource.data.uid == request.auth.uid
+        );
+        allow update, delete: if isSignedIn() && (
+          resource.data.authorUid == request.auth.uid || 
+          resource.data.uid == request.auth.uid
+        );
+      }
+    }
+
+    // Chats: root doc is public for group-link preview
+    match /chats/{chatId} {
+      allow read: if true;   // lets a guest preview group name/photo before login
+      allow create: if isSignedIn() && (
+        request.auth.uid in request.resource.data.participants ||
+        request.auth.uid in request.resource.data.members
+      );
+      allow update, delete: if isSignedIn() && (
+        request.auth.uid in resource.data.participants ||
+        request.auth.uid in resource.data.members ||
+        request.auth.uid in resource.data.admins
+      );
+
+      match /messages/{messageId} {
+        allow read: if (
+          (resource != null && (get(/databases/$(database)/documents/chats/$(chatId)).data.visibility == 'public' || get(/databases/$(database)/documents/chats/$(chatId)).data.isPublic == true)) ||
+          (isSignedIn() && (
+            request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.members ||
+            request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants ||
+            request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.admins
+          ))
+        );
+        allow write: if isSignedIn() && (
+          request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.members ||
+          request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants ||
+          request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.admins
+        );
+      }
+    }
+
+    match /likes/{likeId} { 
+      allow read: if true; 
+      allow create: if isSignedIn() && (
+        request.resource.data.uid == request.auth.uid || 
+        request.resource.data.likerUid == request.auth.uid || 
+        request.resource.data.authorUid == request.auth.uid
+      );
+      allow update, delete: if isSignedIn() && (
+        resource.data.uid == request.auth.uid || 
+        resource.data.likerUid == request.auth.uid || 
+        resource.data.authorUid == request.auth.uid
+      );
+    }
+
+    match /comments/{commentId} { 
+      allow read: if true; 
+      allow create: if isSignedIn() && (
+        request.resource.data.authorUid == request.auth.uid || 
+        request.resource.data.uid == request.auth.uid
+      );
+      allow update, delete: if isSignedIn() && (
+        resource.data.authorUid == request.auth.uid || 
+        resource.data.uid == request.auth.uid
+      );
+    }
+
+    match /follows/{followId} { 
+      allow read: if true; 
+      allow create: if isSignedIn() && (
+        request.resource.data.fromUid == request.auth.uid || 
+        request.resource.data.followerUid == request.auth.uid || 
+        request.resource.data.uid == request.auth.uid
+      );
+      allow update, delete: if isSignedIn() && (
+        resource.data.fromUid == request.auth.uid || 
+        resource.data.followerUid == request.auth.uid || 
+        resource.data.uid == request.auth.uid
+      );
+    }
+
+    // Notifications: owner can read & manage, any logged in user can send/create a notification
+    match /notifications/{userId} {
+      allow read, update, delete: if isOwner(userId);
+      allow create: if isSignedIn();
+      match /{document=**} {
+        allow read, update, delete: if isOwner(userId);
+        allow create: if isSignedIn();
+      }
+    }
+
+    // Monetization collections: SERVER-ONLY via Firebase Admin SDK.
+    // Clients must never read/write these directly — all access goes through
+    // authenticated /api/monetization/* endpoints which enforce anti-fraud rules.
+    match /monetization_views/{viewId} {
+      allow read, write: if false;
+    }
+
+    match /monetization_audit_logs/{logId} {
+      allow read, write: if false;
+    }
+
+    match /ad_impressions/{impressionId} {
+      allow read, write: if false;
+    }
+
+    match /payouts/{payoutId} {
+      allow read, write: if false;
+    }
+
+    // Reports: signed-in users can submit, only the server can read/update/delete.
+    match /reports/{reportId} {
+      allow read: if false;
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
+  }
+}

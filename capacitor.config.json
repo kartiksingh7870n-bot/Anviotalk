@@ -1,0 +1,30 @@
+{
+  "appId": "com.anviotalk.app",
+  "appName": "Anvio Talk",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "hostname": "anviotalk.in"
+  },
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": false,
+      "providers": ["google.com"],
+      "clientId": "1059844371114-cmtloapcph81l56l15tisatpgs7tsmn4.apps.googleusercontent.com"
+    },
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "launchAutoHide": true,
+      "backgroundColor": "#000000",
+      "androidSplashResourceName": "splash",
+      "splashFullScreen": true,
+      "splashImmersive": true
+    },
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    },
+    "Keyboard": {
+      "resize": "body"
+    }
+  }
+}

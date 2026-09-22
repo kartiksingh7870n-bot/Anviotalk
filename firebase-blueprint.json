@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile in AnvioTalk",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "username": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "bio": { "type": "string" },
+        "specialty": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "portfolioPhotos": { "type": "array" },
+        "skillTags": { "type": "array" },
+        "status": { "type": "string" },
+        "followersCount": { "type": "number" },
+        "followingCount": { "type": "number" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "hasCompletedProfileSetup": { "type": "boolean" }
+      },
+      "required": ["uid", "username", "displayName", "email"]
+    },
+    "Username": {
+      "title": "Username Reservation",
+      "description": "Unique username tracking",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" }
+      },
+      "required": ["uid"]
+    },
+    "Story": {
+      "title": "User Story",
+      "description": "Ephemeral 24-hour visual story post",
+      "type": "object",
+      "properties": {
+        "authorUid": { "type": "string" },
+        "authorUsername": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorAvatar": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string" },
+        "caption": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["authorUid", "mediaUrl"]
+    },
+    "ChatThread": {
+      "title": "Chat Thread",
+      "description": "Direct message or group chat conversation thread",
+      "type": "object",
+      "properties": {
+        "participants": { "type": "array" },
+        "lastMessage": { "type": "string" },
+        "lastUpdated": { "type": "string" }
+      },
+      "required": ["participants"]
+    },
+    "ChatMessage": {
+      "title": "Chat Message",
+      "description": "Individual message within a chat thread",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["senderId", "text"]
+    },
+    "NotificationItem": {
+      "title": "Notification Item",
+      "description": "User notification event",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string" },
+        "fromUid": { "type": "string" },
+        "fromName": { "type": "string" },
+        "fromAvatar": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "read": { "type": "boolean" }
+      },
+      "required": ["type", "fromUid"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile collection"
+    },
+    "/usernames/{username}": {
+      "schema": "Username",
+      "description": "Unique reserved usernames"
+    },
+    "/stories/{storyId}": {
+      "schema": "Story",
+      "description": "User stories feed"
+    },
+    "/chats/{chatId}": {
+      "schema": "ChatThread",
+      "description": "Chat conversations"
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Messages in chat"
+    },
+    "/notifications/{userId}/items/{itemId}": {
+      "schema": "NotificationItem",
+      "description": "User notifications"
+    }
+  }
+}

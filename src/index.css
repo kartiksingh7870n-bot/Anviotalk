@@ -1,0 +1,129 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+
+  /* Standard App Colors */
+  --color-primary: #E5FF3B;
+  --color-bg: #0A0A0A;
+  --color-surface: #141414;
+  --color-border: #2A2A2A;
+
+  /* Brand Specific Colors from code.html */
+  --color-brand-black: #09090b;
+  --color-brand-dark: #111113;
+  --color-brand-card: #18181b;
+  --color-brand-border: #27272a;
+  --color-brand-lime: #DDF639;
+  --color-brand-lime-hover: #cbe32d;
+  --color-brand-purple: #8B5CF6;
+  --color-brand-violet: #6D28D9;
+  --color-brand-muted: #71717A;
+  --color-brand-subtle: #A1A1AA;
+
+  /* Shadows from code.html */
+  --shadow-glow-lime: 0 0 20px -2px rgba(221, 246, 57, 0.45);
+  --shadow-glow-button: 0 6px 24px -2px rgba(221, 246, 57, 0.55);
+  --shadow-card-subtle: 0 4px 20px -2px rgba(0, 0, 0, 0.6);
+}
+
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  color-scheme: dark;
+}
+
+html, body, #root {
+  overscroll-behavior: none;
+  height: 100%;
+  background-color: #0A0A0A;
+  color: #FFFFFF;
+}
+
+body {
+  font-family: "Inter", sans-serif;
+  background-color: #0A0A0A;
+  color: #FFFFFF;
+}
+
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@utility glass-effect {
+  background-color: rgba(9, 9, 11, 0.9);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+@utility glass-sheet {
+  background: linear-gradient(180deg, #131316 0%, #0c0c0e 100%);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+@utility ambient-radial {
+  background: radial-gradient(circle at 85% 12%, rgba(124, 58, 237, 0.16) 0%, transparent 60%),
+              radial-gradient(circle at 15% 25%, rgba(221, 246, 57, 0.09) 0%, transparent 50%);
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(221, 246, 57, 0.6);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px rgba(221, 246, 57, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(221, 246, 57, 0);
+  }
+}
+
+@utility live-glow {
+  animation: pulse-ring 2.5s infinite;
+}
+
+@utility no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility glass-pill {
+  background: rgba(28, 28, 35, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+@utility glass-nav {
+  background: rgba(12, 12, 16, 0.82);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+@utility custom-scrollbar {
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: #2A2A2A;
+    border-radius: 9999px;
+  }
+}

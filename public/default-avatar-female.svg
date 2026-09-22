@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg-f" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#EC4899"/>
+      <stop offset="100%" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+  <circle cx="60" cy="60" r="60" fill="url(#bg-f)"/>
+  <!-- Back hair -->
+  <path d="M 30 50 C 26 75, 32 95, 42 105 L 78 105 C 88 95, 94 75, 90 50 Z" fill="#31103F"/>
+  <!-- Neck -->
+  <rect x="53" y="70" width="14" height="16" rx="7" fill="#FBBF24"/>
+  <!-- Outfit -->
+  <path d="M 30 100 C 30 84, 40 80, 60 80 C 80 80, 90 84, 90 100 Z" fill="#F43F5E"/>
+  <path d="M 52 80 C 56 88, 64 88, 68 80 Z" fill="#FBBF24"/>
+  <!-- Face -->
+  <ellipse cx="60" cy="54" rx="20" ry="22" fill="#FDE047"/>
+  <!-- Ears -->
+  <circle cx="39" cy="55" r="4.5" fill="#FACC15"/>
+  <circle cx="81" cy="55" r="4.5" fill="#FACC15"/>
+  <!-- Earrings -->
+  <circle cx="38" cy="61" r="2.5" fill="#F59E0B"/>
+  <circle cx="82" cy="61" r="2.5" fill="#F59E0B"/>
+  <!-- Front Hair/Bangs -->
+  <path d="M 36 50 C 34 32, 46 22, 60 22 C 74 22, 86 32, 84 50 C 78 38, 68 30, 60 36 C 52 30, 42 38, 36 50 Z" fill="#4C1D95"/>
+  <!-- Eyes -->
+  <ellipse cx="51" cy="52" rx="3" ry="3.5" fill="#1E1B4B"/>
+  <ellipse cx="69" cy="52" rx="3" ry="3.5" fill="#1E1B4B"/>
+  <circle cx="52" cy="51" r="1" fill="#FFFFFF"/>
+  <circle cx="70" cy="51" r="1" fill="#FFFFFF"/>
+  <!-- Eyelashes -->
+  <path d="M 47 48 Q 51 46 55 49" stroke="#1E1B4B" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <path d="M 65 49 Q 69 46 73 48" stroke="#1E1B4B" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <!-- Smile -->
+  <path d="M 53 63 Q 60 69 67 63" stroke="#1E1B4B" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <!-- Blush -->
+  <ellipse cx="45" cy="59" rx="4" ry="2.5" fill="#F43F5E" opacity="0.45"/>
+  <ellipse cx="75" cy="59" rx="4" ry="2.5" fill="#F43F5E" opacity="0.45"/>
+</svg>

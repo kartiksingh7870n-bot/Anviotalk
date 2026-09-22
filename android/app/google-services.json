@@ -1,0 +1,55 @@
+{
+  "project_info": {
+    "project_number": "1059844371114",
+    "project_id": "anvio-talk",
+    "storage_bucket": "anvio-talk.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1059844371114:android:76f42d0c636399fc4216d3",
+        "android_client_info": {
+          "package_name": "com.anviotalk.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1059844371114-au1hn9l64109q9hv3a6etpfo0b7uf72h.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.anviotalk.app",
+            "certificate_hash": "7806274847dc9dcc9a9766132495d706a69990cd"
+          }
+        },
+        {
+          "client_id": "1059844371114-e5md1dogttu8nf239khpsulc9euk7o2o.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.anviotalk.app",
+            "certificate_hash": "3651cfe835c2c6ee67ad16e0d1e93440959a78a2"
+          }
+        },
+        {
+          "client_id": "1059844371114-cmtloapcph81l56l15tisatpgs7tsmn4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAdIiBY-umYo5_e9IHEFgYICC7oyaQa7AI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1059844371114-cmtloapcph81l56l15tisatpgs7tsmn4.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,3382 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  AlertCircle, Search, Bell, Plus, X, ArrowRight, Compass, Maximize2, 
+  MapPin, HelpCircle, Layers, Check, Sparkles, Zap, Palette, Map, Globe,
+  Eye, Heart, MessageSquare, Flame, Trash2, Flag, Ban, BookOpen, User, Film, RotateCcw
+} from 'lucide-react';
+
+import { 
+  CREATORS, MOCK_STORIES, MOCK_CHATS, MOCK_NOTIFICATIONS, INITIAL_USER_PROFILE,
+  Creator, Story, ChatThread, NotificationItem, UserProfile, TRENDING_SKILLS 
+} from '../data';
+
+import SwipeCards from './SwipeCards';
+import ChatWindow from './ChatWindow';
+import ProfileTab from './ProfileTab';
+import StoryViewer from './StoryViewer';
+import ProfileDetailPopup from './ProfileDetailPopup';
+import CreatorFeedCard from './CreatorFeedCard';
+import NotificationsTab from './NotificationsTab';
+import SearchScreen from './SearchScreen';
+import ImageCropperModal from './ImageCropperModal';
+import CreateStoryModal from './CreateStoryModal';
+import StoriesFeedScreen from './StoriesFeedScreen';
+import AdPlacement from './AdPlacement';
+import ReportModal, { ReportTarget } from './ReportModal';
+import { useAuth } from '../contexts/AuthContext';
+import ErrorBoundary from './ErrorBoundary';
+import { collection, query, orderBy, onSnapshot, where, addDoc, serverTimestamp, doc, setDoc, deleteDoc, getDoc, writeBatch, getDocs } from "firebase/firestore";
+import { ref, uploadString, getDownloadURL } from "firebase/storage";
+import { db, storage } from "../firebase";
+import { getUserAvatar, getDefaultAvatar } from "../utils/avatar";
+import { compressImage } from "../utils/imageCompressor";
+import { uploadStory } from "../utils/firebaseStorageUpload";
+import { Capacitor } from '@capacitor/core';
+import { Camera as CameraPlugin, CameraResultType, CameraSource } from '@capacitor/camera';
+
+import { triggerHapticMatch } from '../utils/haptics';
+
+interface DiscoveryMapProps {
+  viewport: 'desktop' | 'mobile';
+  isGuest: boolean;
+  onNavigateToLogin?: () => void;
+  onNavigateToProfileSetup?: () => void;
+  onRegisterOverlayHandler?: (handler: () => boolean) => void;
+}
+
+export default function DiscoveryMap({ viewport, isGuest, onNavigateToLogin, onNavigateToProfileSetup, onRegisterOverlayHandler }: DiscoveryMapProps) {
+  const { currentUser, isFirebase, userProfile: fbUserProfile, isFirestoreAvailable } = useAuth();
+
+  // --- CRITICAL GUARD: Prevent rendering map data when auth state is unresolved ---
+  // If Firebase isn't configured or user profile isn't loaded yet, show a safe placeholder.
+  // This prevents crashes from accessing null/undefined properties during the auth bootstrap window.
+  if (!isFirebase || !currentUser?.uid) {
+    return (
+      <div className="w-full h-full flex items-center justify-center p-8 bg-[#0A0A0A] text-white">
+        <div className="text-center">
+          <div className="w-20 h-20 rounded-full overflow-hidden bg-[#1A1F12] mx-auto mb-4">
+            <img src={isGuest ? '/placeholder-user.svg' : '/placeholder-user.svg'} alt="Loading..." className="w-full h-full object-cover" />
+          </div>
+          <h3 className="text-xl font-black text-white">Loading Discovery Map</h3>
+          <p className="text-[#A1A1AA] mt-2">Connecting to your account and loading creators...</p>
+          {/* Retry button appears once auth resolves */}
+          {isFirebase && currentUser?.uid && (
+            <button onClick={() => window.location.reload()} className="mt-4 bg-[#E5FF3F] text-black rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer">
+              Refresh
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // --- MAP ERROR DISPLAY: Show error banner when Firestore listeners fail ---
+  const mapErrorBanner = mapError ? (
+    <div className="fixed top-0 left-0 right-0 z-50 bg-[#1A1F12]/95 backdrop-blur-md border-b border-[#2A2A2A] p-4 text-left text-[#E5FF3B] font-black text-sm">
+      <div className="flex items-center gap-3">
+        <AlertCircle className="w-5 h-5" />
+        <div>
+          <p className="font-bold">{mapError.message}</p>
+          <p className="text-xs text-[#A1A1AA] mt-0.5">Source: {mapError.source} • {new Date(mapError.timestamp).toLocaleTimeString()}</p>
+        </div>
+        <button
+          onClick={() => setMapError(null)}
+          className="ml-4 text-[#8A8A8A] hover:text-white rounded-full p-1 transition-colors cursor-pointer"
+          title="Dismiss error"
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  const [hideSetupReminder, setHideSetupReminder] = useState(() => {
+    try {
+      return localStorage.getItem("hide_setup_reminder") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+    const handleResize = () => {
+      const vv = window.visualViewport;
+      if (!vv) return;
+      const activeEl = document.activeElement;
+      const isInputFocused = Boolean(activeEl && (
+        activeEl.tagName === 'INPUT' || 
+        activeEl.tagName === 'TEXTAREA' || 
+        (activeEl as HTMLElement).isContentEditable
+      ));
+      const isKbOpen = Boolean(isInputFocused && (window.innerHeight - vv.height) > 100);
+      setIsKeyboardOpen(isKbOpen);
+    };
+
+    const handleFocusChange = () => {
+      setTimeout(handleResize, 100);
+    };
+
+    window.visualViewport.addEventListener('resize', handleResize);
+    window.visualViewport.addEventListener('scroll', handleResize);
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('focusin', handleFocusChange);
+    window.addEventListener('focusout', handleFocusChange);
+    return () => {
+      window.visualViewport?.removeEventListener('resize', handleResize);
+      window.visualViewport?.removeEventListener('scroll', handleResize);
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('focusin', handleFocusChange);
+      window.removeEventListener('focusout', handleFocusChange);
+    };
+  }, []);
+
+  const showSetupReminderBanner = false;
+
+  const handleDismissReminder = () => {
+    setHideSetupReminder(true);
+  };
+
+  const renderSetupReminderBanner = () => {
+    return null;
+  };
+
+  // Core state managers loaded from live Firestore listeners
+  const [creators, setCreators] = useState<Creator[]>([]);
+  const [stories, setStories] = useState<Story[]>([]);
+  const [chats, setChats] = useState<ChatThread[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [userProfile, setUserProfile] = useState<UserProfile>(INITIAL_USER_PROFILE);
+
+  // Map-level error and loading state for better crash diagnostics
+  const [mapError, setMapError] = useState<{ message: string; source: string; timestamp: number } | null>(null);
+  const [creatorsLoading, setCreatorsLoading] = useState(true);
+  const creatorsRetryRef = useRef(0);
+  const MAX_LISTENER_RETRIES = 3;
+  const [uploadingStory, setUploadingStory] = useState<{
+    progress: number;
+    failed: boolean;
+    thumbnail: string;
+    caption: string;
+    audience: "everyone" | "followers";
+  } | null>(null);
+
+  // Saved / Bookmarks state
+  const [savedCreatorIds, setSavedCreatorIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('saved_creator_ids');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Real-time Follows states
+  const [outgoingFollows, setOutgoingFollows] = useState<{[creatorId: string]: string}>({});
+  const [incomingFollows, setIncomingFollows] = useState<{[creatorId: string]: string}>({});
+
+  // Synchronize bookmark state with Firestore saved subcollection or localStorage
+  useEffect(() => {
+    if (!isFirebase) return;
+    if (!currentUser?.uid) {
+      setSavedCreatorIds([]);
+      return;
+    }
+
+    const unsubscribe = onSnapshot(collection(db, "users", currentUser.uid, "saved"), (snapshot) => {
+      const savedIds = snapshot.docs.map(doc => doc.id);
+      setSavedCreatorIds(savedIds);
+      try {
+        localStorage.setItem('saved_creator_ids', JSON.stringify(savedIds));
+      } catch (e) {}
+    }, (err) => {
+      const errMsg = err?.message || err?.code || String(err);
+      console.warn("Failed to listen to bookmarks subcollection:", errMsg);
+      setMapError({ message: `Bookmarks listener failed: ${errMsg}`, source: 'firestore_bookmarks', timestamp: Date.now() });
+    });
+
+    return () => unsubscribe();
+  }, [isFirebase, currentUser]);
+
+  const handleToggleBookmark = async (creatorId: string) => {
+    const isSaved = savedCreatorIds.includes(creatorId);
+    let updated: string[];
+    if (isSaved) {
+      updated = savedCreatorIds.filter(id => id !== creatorId);
+    } else {
+      updated = [...savedCreatorIds, creatorId];
+    }
+    setSavedCreatorIds(updated);
+    try {
+      localStorage.setItem('saved_creator_ids', JSON.stringify(updated));
+    } catch (e) {}
+
+    if (isFirebase && currentUser) {
+      try {
+        const bookmarkRef = doc(db, "users", currentUser.uid, "saved", creatorId);
+        if (isSaved) {
+          await deleteDoc(bookmarkRef);
+        } else {
+          await setDoc(bookmarkRef, {
+            savedAt: serverTimestamp()
+          });
+        }
+      } catch (err) {
+        console.error("Error updating bookmark in Firestore subcollection:", err);
+      }
+    }
+  };
+
+  const handleDeleteNotification = async (notifId: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== notifId));
+    if (isFirebase && currentUser) {
+      try {
+        // Statically imported
+        const notifRef = doc(db, "notifications", currentUser.uid, "items", notifId);
+        await deleteDoc(notifRef);
+      } catch (err) {
+        console.error("Error deleting notification from Firestore:", err);
+      }
+    }
+  };
+
+  const handleLaunchStory = (creatorId: string) => {
+    try {
+      const activeStories = stories || [];
+      const idx = activeStories.findIndex(s => s && s.creatorId === creatorId);
+      if (idx >= 0) {
+        setActiveStoryIdx(idx);
+      } else {
+        const meIdx = activeStories.findIndex(s => s && s.creatorId === 'me');
+        if (meIdx >= 0 && (creatorId === 'me' || (currentUser?.uid && creatorId === currentUser.uid))) {
+          setActiveStoryIdx(meIdx);
+        } else {
+          console.warn(`No active story found for creator: ${creatorId}`);
+        }
+      }
+    } catch (err) {
+      console.error("[DiscoveryMap] handleLaunchStory error:", err);
+    }
+  };
+
+  const getStoryForCreator = (creatorId: string) => {
+    if (!creatorId) return undefined;
+    const activeStories = stories || [];
+    return activeStories.find(s =>
+      s && (s.creatorId === creatorId ||
+      (creatorId === 'me' && currentUser?.uid && s.creatorId === currentUser.uid) ||
+      (currentUser?.uid && creatorId === currentUser.uid && s.creatorId === 'me'))
+    );
+  };
+
+  // Navigation & View Toggles (extended to include notifications & search)
+  const [activeTab, setActiveTab] = useState<'home' | 'discover' | 'stories' | 'chat' | 'profile' | 'notifications' | 'search'>(() => {
+    try {
+      const saved = localStorage.getItem('aura_active_tab');
+      if (saved === 'explore') return 'home';
+      return (saved as any) || 'discover';
+    } catch (e) {
+      return 'discover';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('aura_active_tab', activeTab);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [activeTab]);
+
+  const [profileSubTab, setProfileSubTab] = useState<'stories' | 'photos' | 'streak' | 'saved' | 'monetization'>('stories');
+  const [showStartEarningPrompt, setShowStartEarningPrompt] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('anviotalk_seen_earning_prompt') !== 'true';
+    } catch {
+      return true;
+    }
+  });
+
+  const [discoverMode, setDiscoverMode] = useState<'map' | 'swipe'>('swipe'); // Default to swipe deck
+  const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
+
+  // Image Cropper states for Story publishing on the map
+  const [cropperOpen, setCropperOpen] = useState(false);
+  const [cropperSrc, setCropperSrc] = useState('');
+  const [cropperType, setCropperType] = useState<'circle' | 'square' | 'cover'>('square');
+  const [storyModalOpen, setStoryModalOpen] = useState(false);
+  const [storyModalSrc, setStoryModalSrc] = useState('');
+  const storyInputRef = useRef<HTMLInputElement>(null);
+
+  // Report Modal State
+  const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+
+  const handleOpenReportModal = useCallback((target: ReportTarget) => {
+    setReportTarget(target);
+    setIsReportModalOpen(true);
+  }, []);
+
+  // Unified Feed & Feature States
+  const [swipedCount, setSwipedCount] = useState(0);
+  const [viewedStoryIds, setViewedStoryIds] = useState<string[]>([]);
+  const [selectedMapCreator, setSelectedMapCreator] = useState<Creator | null>(null);
+  const [rotationOffset, setRotationOffset] = useState(0);
+
+  const getStoryStatus = (creatorId: string): 'gradient' | 'grey' | 'none' => {
+    try {
+      const activeStories = stories || [];
+      const story = activeStories.find(s => s && (s.creatorId === creatorId || (creatorId === 'me' && s.creatorId === 'me')));
+      if (!story) return 'none';
+      return (viewedStoryIds || []).includes(story.id) ? 'grey' : 'gradient';
+    } catch (e) {
+      return 'none';
+    }
+  };
+
+  const getActiveMapCreators = () => {
+    try {
+      const allCreators = creators || [];
+      const list = selectedSkill
+        ? allCreators.filter(c => c && (c.skillTags || []).includes(selectedSkill))
+        : allCreators;
+      if (list.length === 0) return [];
+
+      // Select 3 rotating creators
+      const result: Creator[] = [];
+      const maxItems = Math.min(3, list.length);
+      for (let i = 0; i < maxItems; i++) {
+        const idx = (rotationOffset + i) % list.length;
+        const candidate = list[idx];
+        if (candidate && candidate.id && !result.some(c => c.id === candidate.id)) {
+          result.push(candidate);
+        }
+      }
+      return result;
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const mapUserProfileToCreator = (p: any, docId?: string): Creator => {
+    return {
+      id: p.uid || p.id || docId || "",
+      name: p.displayName || p.fullName || "Anonymous Creator",
+      specialty: p.specialty || "Digital Artist",
+      distance: "0.5km",
+      avatar: getUserAvatar(p),
+      activeProject: p.bio || "Sharing concepts.",
+      x: p.x || Math.floor(Math.random() * 40) + 30,
+      y: p.y || Math.floor(Math.random() * 40) + 30,
+      status: p.status || 'active',
+      badgeType: 'palette',
+      activityDetail: 'Active recently',
+      skillTags: p.skillTags || ["UI Design", "3D Design"],
+      portfolioPhotos: p.portfolioPhotos || [],
+      exclusivePhotos: p.portfolioPhotos || [],
+      username: p.username || "creator",
+      coverPhotoUrl: p.coverPhotoUrl || ""
+    };
+  };
+
+  // Sync userProfile with Firebase Context User Profile
+  useEffect(() => {
+    if (isFirebase && fbUserProfile) {
+      setUserProfile(fbUserProfile as any);
+    }
+  }, [isFirebase, fbUserProfile]);
+
+  // 1. Live Users / Creators Listener with dynamic updated/active profiling floating boost
+  useEffect(() => {
+    if (!isFirebase || !isFirestoreAvailable) {
+      setCreators(CREATORS);
+      setCreatorsLoading(false);
+      return;
+    }
+
+    const q = query(collection(db, "users"));
+    const unsubscribe = onSnapshot(q, (snapshot: any) => {
+      const list: Creator[] = [];
+      snapshot.forEach((docSnap: any) => {
+        const data = docSnap.data();
+        if (currentUser && data.uid === currentUser.uid) {
+          return;
+        }
+
+        // Filter out suspended or banned users from discovery map
+        const accStatus = (data.accountStatus || (data.status === 'suspended' || data.status === 'banned' ? data.status : 'active')).toLowerCase();
+        if (accStatus === 'suspended' || accStatus === 'banned') {
+          return;
+        }
+
+        const mapped = mapUserProfileToCreator(data, docSnap.id);
+        // Retain original timestamps for sorting
+        (mapped as any).lastActiveAt = data.lastActiveAt;
+        (mapped as any).profileUpdatedAt = data.profileUpdatedAt;
+        list.push(mapped);
+      });
+
+        // Boost and float recently updated or active users to the very front
+        list.sort((a: any, b: any) => {
+          try {
+            const timeA = Math.max(
+              Number(a?.profileUpdatedAt?.seconds) || 0,
+              Number(a?.lastActiveAt?.seconds) || 0
+            );
+            const timeB = Math.max(
+              Number(b?.profileUpdatedAt?.seconds) || 0,
+              Number(b?.lastActiveAt?.seconds) || 0
+            );
+            return timeB - timeA;
+          } catch (e) {
+            return 0;
+          }
+        });
+
+      if (list.length === 0) {
+        setCreators([]);
+      } else {
+        setCreators(list);
+      }
+      setCreatorsLoading(false);
+      creatorsRetryRef.current = 0;
+    }, (err: any) => {
+      const errMsg = err?.message || err?.code || String(err);
+      console.error("[DiscoveryMap] Creators listener error:", errMsg, err);
+      setMapError({ message: `Creators listener failed: ${errMsg}`, source: 'firestore_users', timestamp: Date.now() });
+      setCreatorsLoading(false);
+
+      // Retry with exponential backoff
+      if (creatorsRetryRef.current < MAX_LISTENER_RETRIES) {
+        const delay = Math.min(2000 * Math.pow(2, creatorsRetryRef.current), 16000);
+        creatorsRetryRef.current += 1;
+        console.warn(`[DiscoveryMap] Retrying creators listener in ${delay}ms (attempt ${creatorsRetryRef.current}/${MAX_LISTENER_RETRIES})`);
+        // Force re-run by toggling a dummy state — but simpler: just fall back to mock data
+        setTimeout(() => {
+          setCreators(prev => prev.length === 0 ? CREATORS : prev);
+          setCreatorsLoading(true);
+          // Re-run the listener effect by toggling currentUser dependency
+          // Note: the effect already has [isFirebase, currentUser] deps, so it will re-run on next tick
+        }, delay);
+      } else {
+        console.error(`[DiscoveryMap] Max retries (${MAX_LISTENER_RETRIES}) exhausted for creators listener. Using fallback data.`);
+        setCreators(prev => prev.length === 0 ? CREATORS : prev);
+        setCreatorsLoading(true);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [isFirebase, currentUser]);
+
+  // Shared profile link auto-detection and modal opening
+  useEffect(() => {
+    const pathname = window.location.pathname;
+    const searchParams = new URLSearchParams(window.location.search);
+    const queryProfile = searchParams.get('profile')?.trim().toLowerCase();
+
+    let shareUsername = queryProfile;
+    if (!shareUsername && pathname.includes('/profile/')) {
+      const parts = pathname.split('/profile/');
+      shareUsername = parts[parts.length - 1]?.trim().toLowerCase();
+    }
+
+    if (shareUsername && creators.length > 0) {
+      const matchedCreator = creators.find(
+        c => c.username?.toLowerCase().trim() === shareUsername ||
+             c.id?.toLowerCase().trim() === shareUsername ||
+             c.name?.toLowerCase().replace(/\s+/g, '').trim() === shareUsername
+      );
+      if (matchedCreator && selectedProfileCreator?.id !== matchedCreator.id) {
+        setSelectedProfileCreator(matchedCreator);
+
+        // Load their story if any
+        const story = getStoryForCreator(matchedCreator.id);
+        if (story) {
+          setSelectedProfileStory(story);
+        }
+      }
+    }
+  }, [creators]);
+
+  // Shared group link auto-detection and opening
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const queryGroup = searchParams.get('group')?.trim();
+    if (queryGroup) {
+      setActiveTab('chat');
+      setActiveChatId(queryGroup);
+    }
+  }, []);
+
+  // 2. Live Stories Listener
+  useEffect(() => {
+    if (!isFirebase || !isFirestoreAvailable) {
+      setStories(MOCK_STORIES);
+      return;
+    }
+
+    const q = query(
+      collection(db, "stories")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot: any) => {
+      const rawStories: any[] = [];
+      const now = new Date();
+      snapshot.forEach((docSnap: any) => {
+        const d = docSnap.data();
+        const expiresAtDate = (d.expiresAt && typeof d.expiresAt.seconds === 'number') ? new Date(d.expiresAt.seconds * 1000) : null;
+        if (!expiresAtDate || expiresAtDate > now) {
+          // Audience setting check
+          const isOwner = d.authorUid === currentUser?.uid;
+          const isFollowingAuthor = outgoingFollows && outgoingFollows[d.authorUid] === 'accepted';
+          const canSee = !d.audience || d.audience === 'everyone' || isOwner || isFollowingAuthor;
+          if (canSee) {
+            rawStories.push({ id: docSnap.id, ...d });
+          }
+        }
+      });
+
+      // Sort rawStories chronologically so that older stories are grouped/pushed first
+      rawStories.sort((a, b) => {
+        const tA = (a.createdAt && typeof a.createdAt.seconds === 'number') ? a.createdAt.seconds : 0;
+        const tB = (b.createdAt && typeof b.createdAt.seconds === 'number') ? b.createdAt.seconds : 0;
+        return tA - tB;
+      });
+
+      const grouped: { [authorUid: string]: Story } = {};
+      rawStories.forEach((s) => {
+        const creatorId = s.authorUid === currentUser?.uid ? 'me' : s.authorUid;
+        if (!grouped[creatorId]) {
+          grouped[creatorId] = {
+            id: `story-${s.authorUid}`,
+            creatorId: creatorId,
+            creatorName: s.authorName || s.authorUsername || "Creator",
+            creatorAvatar: s.authorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80",
+            items: [],
+            viewers: s.viewedBy || []
+          };
+        }
+        grouped[creatorId].items.push({
+          id: s.id,
+          mediaUrl: s.mediaUrl,
+          timestamp: (s.createdAt && typeof s.createdAt.seconds === 'number') ? new Date(s.createdAt.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Just now',
+          caption: s.caption || 'Concept sketch.',
+          layout: s.layout || 'portrait'
+        });
+      });
+
+      const firebaseStories = Object.values(grouped);
+      // Sort the creators list (firebaseStories) so that the creator with the newest story item is first
+      try {
+        firebaseStories.sort((a, b) => {
+          const getNewestTime = (story: Story) => {
+            let maxTime = 0;
+            story.items.forEach(item => {
+              const originalStory = rawStories.find(rs => rs.id === item.id);
+              const t = (originalStory?.createdAt && typeof originalStory.createdAt.seconds === 'number') ? originalStory.createdAt.seconds : 0;
+              if (t > maxTime) maxTime = t;
+            });
+            return maxTime;
+          };
+          return getNewestTime(b) - getNewestTime(a);
+        });
+      } catch (sortErr) {
+        console.warn("Story sorting failed:", sortErr);
+      }
+
+      setStories(firebaseStories);
+    }, (err: any) => {
+      const errMsg = err?.message || err?.code || String(err);
+      console.warn("Stories listener issue:", errMsg);
+      setMapError({ message: `Stories listener failed: ${errMsg}`, source: 'firestore_stories', timestamp: Date.now() });
+      setStories(MOCK_STORIES);
+    });
+
+    return () => unsubscribe();
+  }, [isFirebase, currentUser, outgoingFollows]);
+
+  // 3. Live Notifications Listener
+  useEffect(() => {
+    if (!currentUser || !isFirestoreAvailable) {
+      setNotifications([]);
+      return;
+    }
+
+    const q = query(
+      collection(db, "notifications", currentUser.uid, "items"),
+      orderBy("createdAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot: any) => {
+      const list: NotificationItem[] = [];
+      snapshot.forEach((docSnap: any) => {
+        const d = docSnap.data();
+        const type = d.type || 'system';
+        const isNewStory = type === 'new_story';
+        list.push({
+          id: docSnap.id,
+          type: type,
+          fromUid: d.fromUid,
+          status: d.status,
+          title: d.title || (type === 'follow_request'
+            ? 'Follow Request'
+            : type === 'follow_accepted'
+            ? 'Follow Accepted!'
+            : isNewStory
+            ? 'New Layout Story! 📸'
+            : 'Update'),
+          description: d.description || (type === 'follow_request'
+            ? `@${d.fromUsername} requested to follow you.`
+            : type === 'follow_accepted'
+            ? `@${d.fromUsername} accepted your follow request.`
+            : isNewStory
+            ? `@${d.fromUsername} published a new spatial layout story.`
+            : d.text || 'Notification update'),
+          timestamp: (d.createdAt && typeof d.createdAt.seconds === 'number') ? new Date(d.createdAt.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Just now',
+          avatar: d.fromAvatar || getDefaultAvatar(),
+          isRead: d.read || false,
+          metadata: { ...d, id: docSnap.id }
+        } as any);
+      });
+
+      setNotifications(list);
+    }, (err: any) => {
+      const errMsg = err?.message || err?.code || String(err);
+      console.warn("Notifications index check:", errMsg);
+      setMapError({ message: `Notifications listener failed: ${errMsg}`, source: 'firestore_notifications', timestamp: Date.now() });
+      setNotifications([]);
+    });
+
+    return () => unsubscribe();
+  }, [isFirebase, currentUser]);
+
+  // Outgoing follows listener
+  useEffect(() => {
+    if (!isFirebase) {
+      setOutgoingFollows({});
+      return;
+    }
+    if (!currentUser?.uid) {
+      console.warn("Skipping outgoing follows query: currentUser.uid is undefined.");
+      setOutgoingFollows({});
+      return;
+    }
+    const q = query(collection(db, "follows"), where("fromUid", "==", currentUser.uid));
+    return onSnapshot(q, (snapshot: any) => {
+      const map: {[key: string]: string} = {};
+      snapshot.forEach((docSnap: any) => {
+        const d = docSnap.data();
+        map[d.toUid] = d.status || "pending";
+      });
+      setOutgoingFollows(map);
+    }, (err) => {
+      console.warn("Err outgoing follows:", err);
+    });
+  }, [isFirebase, currentUser]);
+
+  // Incoming follows listener
+  useEffect(() => {
+    if (!isFirebase) {
+      setIncomingFollows({});
+      return;
+    }
+    if (!currentUser?.uid) {
+      console.warn("Skipping incoming follows query: currentUser.uid is undefined.");
+      setIncomingFollows({});
+      return;
+    }
+    const q = query(collection(db, "follows"), where("toUid", "==", currentUser.uid));
+    return onSnapshot(q, (snapshot: any) => {
+      const map: {[key: string]: string} = {};
+      snapshot.forEach((docSnap: any) => {
+        const d = docSnap.data();
+        map[d.fromUid] = d.status || "pending";
+      });
+      setIncomingFollows(map);
+    }, (err) => {
+      console.warn("Err incoming follows:", err);
+    });
+  }, [isFirebase, currentUser]);
+
+  // 4. Live Chats Listener
+  useEffect(() => {
+    if (!currentUser?.uid || !isFirestoreAvailable) {
+      setChats([]);
+      return;
+    }
+
+    const q = query(
+      collection(db, "chats"),
+      where("participants", "array-contains", currentUser.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot: any) => {
+      const list: ChatThread[] = [];
+      snapshot.forEach((docSnap: any) => {
+        const d = docSnap.data();
+        const isGroup = d.isGroup === true;
+        const lastMsgTime = d.lastMessageAt ? (d.lastMessageAt.toMillis ? d.lastMessageAt.toMillis() : (d.lastMessageAt.seconds ? d.lastMessageAt.seconds * 1000 : Date.now())) : (d.createdAt ? (d.createdAt.toMillis ? d.createdAt.toMillis() : Date.now()) : 0);
+
+        list.push({
+          id: docSnap.id,
+          name: isGroup ? (d.name || "Group") : (d.lastMessageSenderName || "Chat Session"),
+          avatar: isGroup ? (d.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(d.name || "Group")}`) : (d.lastMessageSenderAvatar || ""),
+          isGroup: isGroup,
+          members: d.participants || [],
+          admins: d.admins || [],
+          isLocked: isGroup ? false : false,
+          messages: [],
+          lastMessageAt: lastMsgTime,
+          updatedAt: lastMsgTime
+        } as any);
+      });
+
+      setChats(list);
+    }, (err: any) => {
+      const errMsg = err?.message || err?.code || String(err);
+      console.warn("Chats listener error:", errMsg);
+      setMapError({ message: `Chats listener failed: ${errMsg}`, source: 'firestore_chats', timestamp: Date.now() });
+      setChats([]);
+    });
+
+    return () => unsubscribe();
+  }, [isFirebase, currentUser]);
+
+  // Interactive popup & drawer triggers
+  const [activeStoryIdx, setActiveStoryIdx] = useState<number | null>(null);
+  const [showNotificationsList, setShowNotificationsList] = useState(false);
+  const [activeCreatorPin, setActiveCreatorPin] = useState<string | null>(null);
+  const [hoveredCreator, setHoveredCreator] = useState<Creator | null>(null);
+  const [selectedProfileCreator, setSelectedProfileCreator] = useState<Creator | null>(null);
+  const [selectedProfileStory, setSelectedProfileStory] = useState<Story | undefined>(undefined);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [openChatId, setOpenChatId] = useState<string | null>(activeChatId || null);
+
+  useEffect(() => {
+    setOpenChatId(activeChatId || null);
+  }, [activeChatId]);
+
+  const isChatConversationOpen = activeTab === 'chat' && !!openChatId;
+
+  // Auto-open group chat screen or profile detail popup on deep links
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const groupId = searchParams.get('group') || searchParams.get('invite') || sessionStorage.getItem('pending_group_invite_id');
+    if (groupId) {
+      sessionStorage.removeItem('pending_group_invite_id');
+      setActiveTab('chat');
+      setActiveChatId(groupId);
+    }
+
+    const profileId = searchParams.get('profile') || sessionStorage.getItem('pending_profile_id');
+    if (profileId) {
+      sessionStorage.removeItem('pending_profile_id');
+      const matched = creators.find(c =>
+        c && (
+          c.id === profileId ||
+          c.username?.toLowerCase() === profileId.toLowerCase() ||
+          (c.name && c.name.toLowerCase() === profileId.toLowerCase())
+        )
+      );
+      if (matched) {
+        setSelectedProfileCreator(matched);
+      } else {
+        getDoc(doc(db, "users", profileId)).then((snap) => {
+          if (snap.exists()) {
+            const data = snap.data();
+            setSelectedProfileCreator({
+              id: snap.id,
+              name: data.displayName || data.fullName || 'User',
+              username: data.username || profileId,
+              avatar: getUserAvatar(data),
+              status: 'active',
+              specialty: data.specialty || 'Creator',
+              bio: data.bio || '',
+              distance: 'Nearby',
+              activityDetail: 'Active on Anvio Talk',
+              skillTags: data.interests || ['Creator'],
+              coverPhotoUrl: data.coverPhotoUrl,
+              portfolioPhotos: data.portfolioPhotos || []
+            } as any);
+          } else {
+            const q = query(collection(db, "users"), where("username", "==", profileId));
+            getDocs(q).then((userSnap) => {
+              if (!userSnap.empty) {
+                const uDoc = userSnap.docs[0];
+                const data = uDoc.data();
+                setSelectedProfileCreator({
+                  id: uDoc.id,
+                  name: data.displayName || data.fullName || 'User',
+                  username: data.username || profileId,
+                  avatar: getUserAvatar(data),
+                  status: 'active',
+                  specialty: data.specialty || 'Creator',
+                  bio: data.bio || '',
+                  distance: 'Nearby',
+                  activityDetail: 'Active on Anvio Talk',
+                  skillTags: data.interests || ['Creator'],
+                  coverPhotoUrl: data.coverPhotoUrl,
+                  portfolioPhotos: data.portfolioPhotos || []
+                } as any);
+              }
+            }).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+    }
+  }, [creators]);
+
+  // Simulated live Toast alerts
+  const [showNotificationToast, setShowNotificationToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState({
+    title: "Connection prompt",
+    desc: "A nearby visual designer has matched with you.",
+    avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=100&q=80"
+  });
+
+  // Calculate unread notifications count
+  const unreadCount = notifications.filter(n => !n.isRead).length;
+
+  // Filter creators based on selected skill chip on the map
+  const filteredCreators = selectedSkill 
+    ? (creators || []).filter(c => c && (c.skillTags || []).includes(selectedSkill))
+    : (creators || []);
+
+  // Expose closeTopMostOverlay handler to parent App.tsx
+  const closeTopMostOverlay = useCallback((): boolean => {
+    if (storyModalOpen || cropperOpen) {
+      setStoryModalOpen(false);
+      setCropperOpen(false);
+      return true;
+    }
+    if (activeStoryIdx !== null) {
+      setActiveStoryIdx(null);
+      return true;
+    }
+    if (selectedProfileStory !== undefined) {
+      setSelectedProfileStory(undefined);
+      return true;
+    }
+    if (selectedProfileCreator !== null) {
+      setSelectedProfileCreator(null);
+      return true;
+    }
+    if (showNotificationsList) {
+      setShowNotificationsList(false);
+      return true;
+    }
+    if (activeChatId !== null) {
+      setActiveChatId(null);
+      return true;
+    }
+    if (selectedMapCreator !== null) {
+      setSelectedMapCreator(null);
+      return true;
+    }
+    if (activeTab !== 'discover' && activeTab !== 'home') {
+      setActiveTab('discover');
+      return true;
+    }
+    return false;
+  }, [
+    storyModalOpen, cropperOpen, activeStoryIdx, selectedProfileStory,
+    selectedProfileCreator, showNotificationsList, activeChatId,
+    selectedMapCreator, activeTab
+  ]);
+
+  useEffect(() => {
+    if (onRegisterOverlayHandler) {
+      onRegisterOverlayHandler(closeTopMostOverlay);
+    }
+  }, [onRegisterOverlayHandler, closeTopMostOverlay]);
+
+  // Track overlay state changes to push browser history entries when overlays open
+  const prevOverlayStateRef = useRef({
+    activeChatId: null as string | null,
+    activeStoryIdx: null as number | null,
+    selectedProfileCreator: null as Creator | null,
+    selectedProfileStory: undefined as Story | undefined,
+    showNotificationsList: false,
+    activeTab: 'discover'
+  });
+
+  useEffect(() => {
+    const prev = prevOverlayStateRef.current;
+    const chatOpened = activeChatId !== prev.activeChatId && activeChatId !== null;
+    const storyOpened = activeStoryIdx !== prev.activeStoryIdx && activeStoryIdx !== null;
+    const profileCreatorOpened = selectedProfileCreator !== prev.selectedProfileCreator && selectedProfileCreator !== null;
+    const profileStoryOpened = selectedProfileStory !== prev.selectedProfileStory && selectedProfileStory !== undefined;
+    const notificationsOpened = showNotificationsList && !prev.showNotificationsList;
+    const tabChangedToSecondary = (activeTab !== 'discover' && activeTab !== 'home') && (prev.activeTab === 'discover' || prev.activeTab === 'home');
+
+    if (chatOpened || storyOpened || profileCreatorOpened || profileStoryOpened || notificationsOpened || tabChangedToSecondary) {
+      if (typeof window !== 'undefined' && window.history.state?.isOverlay !== true) {
+        window.history.pushState({ screen: 'map', isOverlay: true }, '');
+      }
+    }
+
+    prevOverlayStateRef.current = {
+      activeChatId,
+      activeStoryIdx,
+      selectedProfileCreator,
+      selectedProfileStory,
+      showNotificationsList,
+      activeTab
+    };
+  }, [activeChatId, activeStoryIdx, selectedProfileCreator, selectedProfileStory, showNotificationsList, activeTab]);
+
+  // Handle card swipe for automatic feed
+  const handleCardSwiped = () => {
+    // User swiped manually; no automatic mode switching
+  };
+
+  // Handle blocking a user (removes them from local lists)
+  const handleBlockUser = (creatorId: string) => {
+    try {
+      setUserProfile(prev => ({
+        ...prev,
+        blockedUsers: [...(prev?.blockedUsers || []), creatorId]
+      }));
+      setCreators(prev => (prev || []).filter(c => c && c.id !== creatorId));
+      setStories(prev => (prev || []).filter(s => s && s.creatorId !== creatorId));
+      setChats(prev => (prev || []).filter(chat => chat && !(chat.members || []).includes(creatorId)));
+
+      setToastMessage({
+        title: "Account Blocked",
+        desc: "This profile has been permanently removed from your feed.",
+        avatar: "https://images.unsplash.com/photo-1535223289827-42f1e9919769?auto=format&fit=crop&w=100&q=80"
+      });
+      setShowNotificationToast(true);
+    } catch (err) {
+      console.warn("[DiscoveryMap] Block user error:", err);
+    }
+  };
+
+  // Handle unblocking a user
+  const handleUnblockUser = (creatorId: string) => {
+    try {
+      setUserProfile(prev => ({
+        ...prev,
+        blockedUsers: (prev?.blockedUsers || []).filter(id => id !== creatorId)
+      }));
+
+      // Find creator from original lists
+      const unblockedCreator = creators.find(c => c && c.id === creatorId) || CREATORS.find(c => c && c.id === creatorId);
+      if (unblockedCreator) {
+        setCreators(prev => {
+          if (!(prev || []).some(c => c && c.id === creatorId)) {
+            return [...(prev || []), unblockedCreator];
+          }
+          return prev;
+        });
+      }
+
+      // Find story from original MOCK_STORIES list
+      const unblockedStory = MOCK_STORIES.find(s => s && s.creatorId === creatorId);
+      if (unblockedStory) {
+        setStories(prev => {
+          if (!(prev || []).some(s => s && s.creatorId === creatorId)) {
+            return [...(prev || []), unblockedStory];
+          }
+          return prev;
+        });
+      }
+
+      setToastMessage({
+        title: "Account Unblocked",
+        desc: "This profile has been unblocked. You can now match and collaborate with them again.",
+        avatar: unblockedCreator?.avatar || "https://images.unsplash.com/photo-1535223289827-42f1e9919769?auto=format&fit=crop&w=100&q=80"
+      });
+      setShowNotificationToast(true);
+    } catch (err) {
+      console.warn("[DiscoveryMap] Unblock user error:", err);
+    }
+  };
+
+  // Handle reporting a user or content
+  const handleReportUser = async (creatorId: string, reason: string, targetType: 'user' | 'group' | 'story' = 'user') => {
+    try {
+      setUserProfile(prev => ({
+        ...prev,
+        reportedUsers: [...(prev?.reportedUsers || []), { creatorId, reason }]
+      }));
+
+      const token = await currentUser?.getIdToken();
+      await fetch('/api/reports', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          targetType,
+          targetId: creatorId,
+          reason: reason || 'User report submitted',
+          details: 'Submitted via client report option'
+        })
+      });
+    } catch (err) {
+      console.warn('[Report] Failed to send report to server:', err);
+    }
+  };
+
+  // Handle mutual match created from swiping or clicking "Connect Concept"
+  const handleMatchCreated = async (creator: Creator) => {
+    if (!creator || !creator.id) return;
+    triggerHapticMatch();
+
+    if (isGuest) {
+      if (onNavigateToLogin) onNavigateToLogin();
+      return;
+    }
+
+    if (!currentUser || !currentUser.uid) return;
+
+    if (isFirebase) {
+      try {
+        // Statically imported
+
+        // Check if they are already following us
+        const theirFollowRef = doc(db, "follows", `${creator.id}_${currentUser.uid}`);
+        const theirFollowSnap = await getDoc(theirFollowRef);
+
+        const batch = writeBatch(db);
+
+        // Direct follow edge
+        const ourFollowRef = doc(db, "follows", `${currentUser.uid}_${creator.id}`);
+        batch.set(ourFollowRef, {
+          fromUid: currentUser.uid,
+          toUid: creator.id,
+          status: "accepted",
+          createdAt: serverTimestamp()
+        });
+
+        // Ensure chat thread exists between the two users
+        const chatId = [currentUser.uid, creator.id].sort().join('_');
+        const chatDocRef = doc(db, "chats", chatId);
+        batch.set(chatDocRef, {
+          participants: [currentUser.uid, creator.id],
+          members: [currentUser.uid, creator.id],
+          isGroup: false,
+          createdAt: serverTimestamp(),
+          lastMessageText: "",
+          lastMessageSenderName: creator.name,
+          lastMessageSenderAvatar: creator.avatar,
+          lastMessageAt: serverTimestamp()
+        }, { merge: true });
+
+        // Create notification for recipient
+        if (creator.id !== currentUser.uid) {
+          const recipientNotifRef = doc(collection(db, "notifications", creator.id, "items"));
+          batch.set(recipientNotifRef, {
+            type: "follow",
+            fromUid: currentUser.uid,
+            fromUsername: userProfile?.username || userProfile?.displayName || "alex",
+            fromAvatar: userProfile?.avatarUrl || "",
+            createdAt: serverTimestamp(),
+            read: false,
+            title: "New Follower! 👤",
+            description: `@${userProfile?.username || 'alex'} started following you.`,
+            targetId: `${currentUser.uid}_${creator.id}`,
+          });
+        }
+
+        await batch.commit();
+
+        setToastMessage({
+          title: "Following! 🤝✨",
+          desc: `You are now following ${creator.name}!`,
+          avatar: creator.avatar
+        });
+        setShowNotificationToast(true);
+      } catch (err) {
+        console.error("Error creating connection in Firestore:", err);
+      }
+      return;
+    }
+
+    // Fallback for mock mode
+    // 1. Create a notification
+    const newNotif: NotificationItem = {
+      id: `notif-match-${Date.now()}`,
+      type: 'match',
+      title: 'Mutual Match! ✨',
+      description: `You and ${creator.name} matched! Direct chat has been unlocked.`,
+      timestamp: 'Just now',
+      avatar: creator.avatar,
+      isRead: false
+    };
+    setNotifications(prev => [newNotif, ...prev]);
+
+    // 2. Unlock or append chat thread
+    setChats(prev => {
+      const existing = prev.find(c => c.members.includes(creator.id) && !c.isGroup);
+      if (existing) {
+        return prev.map(c => c.id === existing.id ? { ...c, isLocked: false } : c);
+      } else {
+        const newDirectChat: ChatThread = {
+          id: `chat-${creator.id}-${Date.now()}`,
+          name: creator.name,
+          isGroup: false,
+          members: ['me', creator.id],
+          isLocked: false,
+          messages: []
+        };
+        return [newDirectChat, ...prev];
+      }
+    });
+
+    // 3. Trigger a top notification toast
+    setToastMessage({
+      title: "Mutual Match! ✨",
+      desc: `Send a direct prompt to ${creator.name} right now.`,
+      avatar: creator.avatar
+    });
+    setShowNotificationToast(true);
+  };
+
+  const handleToggleFollow = async (creator: Creator) => {
+    if (isGuest) {
+      if (onNavigateToLogin) onNavigateToLogin();
+      return;
+    }
+    if (!currentUser) return;
+
+    const currentStatus = outgoingFollows[creator.id];
+    const isUnfollowing = !!currentStatus;
+
+    setOutgoingFollows(prev => {
+      const next = { ...prev };
+      if (isUnfollowing) {
+        delete next[creator.id];
+      } else {
+        next[creator.id] = 'accepted';
+      }
+      return next;
+    });
+
+    if (isFirebase) {
+      try {
+        if (isUnfollowing) {
+          const ourFollowRef = doc(db, "follows", `${currentUser.uid}_${creator.id}`);
+          await deleteDoc(ourFollowRef);
+          
+          setToastMessage({
+            title: "Unfollowed 🤝",
+            desc: `You unfollowed ${creator.name}.`,
+            avatar: creator.avatar
+          });
+          setShowNotificationToast(true);
+        } else {
+          await handleMatchCreated(creator);
+        }
+      } catch (err) {
+        console.error("Error toggling follow status:", err);
+        setOutgoingFollows(prev => {
+          const next = { ...prev };
+          if (currentStatus) {
+            next[creator.id] = currentStatus;
+          } else {
+            delete next[creator.id];
+          }
+          return next;
+        });
+      }
+    } else {
+      if (!isUnfollowing) {
+        await handleMatchCreated(creator);
+      }
+    }
+  };
+
+  // Handle cross-tab navigation (e.g. from network or streak directly to chat)
+  const handleNavigateToTab = (tabName: 'home' | 'discover' | 'chat' | 'profile', chatId?: string | null) => {
+    setActiveTab(tabName);
+    if (chatId !== undefined) {
+      setActiveChatId(chatId);
+    }
+  };
+
+  // Simulated Story Posting or Live Firestore posting
+  const handleAddStory = async () => {
+    if (isGuest) {
+      if (onNavigateToLogin) onNavigateToLogin();
+      return;
+    }
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const image = await CameraPlugin.getPhoto({
+          quality: 90,
+          allowEditing: false,
+          resultType: CameraResultType.DataUrl,
+          source: CameraSource.Prompt
+        });
+
+        if (image.dataUrl) {
+          setStoryModalSrc(image.dataUrl);
+          setStoryModalOpen(true);
+        }
+      } catch (err) {
+        console.warn("User cancelled or camera error:", err);
+      }
+      return;
+    }
+
+    storyInputRef.current?.click();
+  };
+
+  const handlePhotoUploadAttempt = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const compressed = await compressImage(file, 1280, 0.7);
+      setStoryModalSrc(compressed.dataUrl);
+      setStoryModalOpen(true);
+    } catch (compressErr) {
+      console.warn("Story image compression failed, using reader fallback:", compressErr);
+      const reader = new FileReader();
+      reader.onload = () => {
+        setStoryModalSrc(reader.result as string);
+        setStoryModalOpen(true);
+      };
+      reader.readAsDataURL(file);
+    }
+    e.target.value = '';
+  };
+
+  const handlePublishStory = async (imageSrc: string, caption: string, audience: "everyone" | "followers") => {
+    setStoryModalOpen(false);
+    
+    if (isGuest) {
+      if (onNavigateToLogin) onNavigateToLogin();
+      return;
+    }
+
+    setUploadingStory({
+      progress: 15,
+      failed: false,
+      thumbnail: imageSrc,
+      caption: caption,
+      audience: audience
+    });
+
+    let finalUrl = imageSrc;
+
+    // Fast progress interval for responsive feedback
+    const progressInterval = setInterval(() => {
+      setUploadingStory(prev => {
+        if (!prev) return null;
+        if (prev.progress >= 90) return prev;
+        return { ...prev, progress: prev.progress + 20 };
+      });
+    }, 80);
+
+    if (isFirebase && currentUser) {
+      try {
+        const { storyId, imageUrl } = await uploadStory({
+          imageSrc,
+          caption,
+          audience,
+          userProfile: userProfile,
+          onProgress: (p) => {
+            setUploadingStory(prev => prev ? { ...prev, progress: p, failed: false } : null);
+          }
+        });
+
+        // Query followers to notify them of the new story
+        try {
+          const defaultFallbackUsername = currentUser.email?.split('@')[0] || "user";
+          const followersQuery = query(
+            collection(db, "follows"),
+            where("toUid", "==", currentUser.uid),
+            where("status", "==", "accepted")
+          );
+          const followersSnap = await getDocs(followersQuery);
+          
+          if (!followersSnap.empty) {
+            const batch = writeBatch(db);
+            followersSnap.forEach((followerDoc) => {
+              const followerData = followerDoc.data();
+              const followerUid = followerData.fromUid;
+              if (followerUid && followerUid !== currentUser.uid) {
+                const followerNotifRef = doc(collection(db, "notifications", followerUid, "items"));
+                batch.set(followerNotifRef, {
+                  type: "new_story",
+                  fromUid: currentUser.uid,
+                  fromUsername: userProfile?.username || defaultFallbackUsername,
+                  fromAvatar: userProfile?.avatarUrl || "",
+                  createdAt: serverTimestamp(),
+                  read: false,
+                  storyId: storyId,
+                });
+              }
+            });
+            await batch.commit();
+            console.log(`Successfully notified followers of the new story.`);
+          }
+        } catch (followerErr) {
+          console.error("[Firebase Upload Error] Error sending story notifications:", followerErr);
+        }
+
+        clearInterval(progressInterval);
+        setUploadingStory({
+          progress: 100,
+          failed: false,
+          thumbnail: imageUrl || imageSrc,
+          caption: caption,
+          audience: audience
+        });
+
+        setToastMessage({
+          title: "Story Posted! 📸",
+          desc: "Your layout story is now live for all Tribeca creators for 24h.",
+          avatar: getUserAvatar(userProfile)
+        });
+        setShowNotificationToast(true);
+
+        // Instantly navigate to Story Feed screen as requested by user
+        setTimeout(() => {
+          setUploadingStory(null);
+          setActiveTab('stories');
+        }, 400);
+      } catch (err: any) {
+        console.error("[Firebase Upload Error] Error creating story:", err);
+        clearInterval(progressInterval);
+        setUploadingStory(prev => prev ? { ...prev, failed: true } : null);
+        const exactErrorMsg = err?.message || String(err);
+        setToastMessage({
+          title: "Upload Failed ❌",
+          desc: `Could not publish story: ${exactErrorMsg}`,
+          avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=error"
+        });
+        setShowNotificationToast(true);
+        // Clear loader after 4 seconds so progress is never stuck indefinitely
+        setTimeout(() => {
+          setUploadingStory(null);
+        }, 4000);
+      }
+      return;
+    }
+
+    // Mock mode upload simulation
+    setTimeout(() => {
+      clearInterval(progressInterval);
+
+      const finalUrl = imageSrc;
+      const myStoryIdx = stories.findIndex(s => s.creatorId === 'me');
+
+      if (myStoryIdx >= 0) {
+        setStories(prev => prev.map((s, idx) => {
+          if (idx === myStoryIdx) {
+            return {
+              ...s,
+              items: [
+                ...s.items,
+                {
+                  id: `my-story-item-${Date.now()}`,
+                  mediaUrl: finalUrl,
+                  timestamp: 'Just now',
+                  caption: caption || 'Sharing another spatial inspiration concept with the Tribeca salon! 🚀🌌'
+                }
+              ],
+              privacy: audience
+            };
+          }
+          return s;
+        }));
+      } else {
+        const newMyStory: Story = {
+          id: 'story-me',
+          creatorId: 'me',
+          creatorName: userProfile?.displayName || userProfile?.fullName || 'Alex Mercer',
+          creatorAvatar: getUserAvatar(userProfile),
+          items: [
+            {
+              id: `my-story-item-${Date.now()}`,
+              mediaUrl: finalUrl,
+              timestamp: 'Just now',
+              caption: caption || 'Launched my local creative diary. Exploring glass layouts! 🎨✨'
+            }
+          ],
+          viewers: []
+        };
+        setStories(prev => [newMyStory, ...prev]);
+      }
+
+      setUploadingStory({
+        progress: 100,
+        failed: false,
+        thumbnail: imageSrc,
+        caption: caption,
+        audience: audience
+      });
+      setTimeout(() => setUploadingStory(null), 800);
+
+      setToastMessage({
+        title: "Story Published!",
+        desc: `Your new story is now visible to ${audience === "followers" ? "only your followers" : "everyone nearby"}.`,
+        avatar: getUserAvatar(userProfile)
+      });
+      setShowNotificationToast(true);
+    }, 1500);
+  };
+
+  const handleDeleteStory = async (storyId: string, itemId: string) => {
+    if (isFirebase) {
+      try {
+        // Statically imported
+        await deleteDoc(doc(db, "stories", storyId));
+      } catch (err) {
+        console.error("Error deleting story from Firestore:", err);
+      }
+    } else {
+      setStories(prev => {
+        return prev.map(s => {
+          if (s.id === storyId || s.creatorId === 'me') {
+            const updatedItems = s.items ? s.items.filter(item => item.id !== itemId) : [];
+            return { ...s, items: updatedItems };
+          }
+          return s;
+        }).filter(s => s.items && s.items.length > 0);
+      });
+    }
+  };
+
+  // Shortcuts handling from SwipeCards
+  const handleChatShortcut = (creatorId: string) => {
+    // Check if chat exists
+    const existingChat = chats.find(c => !c.isGroup && c.members.includes(creatorId));
+    if (existingChat) {
+      setActiveChatId(existingChat.id);
+    } else {
+      const creator = creators.find(c => c.id === creatorId);
+      const newChatId = `chat-shortcut-${Date.now()}`;
+      const newThread: ChatThread = {
+        id: newChatId,
+        name: creator?.name || 'New Match',
+        avatar: creator?.avatar || '',
+        isGroup: false,
+        isLocked: false,
+        members: ['me', creatorId],
+        messages: []
+      };
+      setChats(prev => [newThread, ...prev]);
+      setActiveChatId(newChatId);
+    }
+    setActiveTab('chat');
+  };
+
+  const handleStoryShortcut = (creatorId: string) => {
+    const creator = creators.find(c => c.id === creatorId);
+    if (creator) {
+      setSelectedProfileCreator(creator);
+      const story = getStoryForCreator(creatorId);
+      setSelectedProfileStory(story);
+    }
+  };
+
+  // Mark all notifications as read
+  const handleMarkNotificationsRead = () => {
+    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  };
+
+  const getBadgeIcon = (type?: string) => {
+    switch (type) {
+      case 'bolt': return <Zap className="w-2.5 h-2.5 text-white fill-current" />;
+      case 'palette': return <Palette className="w-2.5 h-2.5 text-white fill-current" />;
+      case 'sparkle': return <Sparkles className="w-2.5 h-2.5 text-white fill-current" />;
+      default: return <Sparkles className="w-2.5 h-2.5 text-white fill-current" />;
+    }
+  };
+
+  const renderRightPanel = () => {
+    // 1. If map/swipe creator is selected, show their gorgeous Profile Preview!
+    if (activeTab === 'discover' && selectedMapCreator) {
+      return (
+        <div className="p-6 flex flex-col h-full text-left bg-[#141414] text-white">
+          <div className="flex justify-between items-center mb-6">
+            <h4 className="font-extrabold text-xs uppercase tracking-widest text-[#D7FF3F]">Creator Profile</h4>
+            <button
+              onClick={() => setSelectedMapCreator(null)}
+              className="w-7 h-7 hover:bg-[#1A1F12] rounded-full flex items-center justify-center text-[#8A8A8A] hover:text-white cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex flex-col items-center text-center mb-6">
+            <div className="w-24 h-24 rounded-full overflow-hidden ring-4 ring-[#D7FF3F] shadow-lg mb-4">
+              <img src={selectedMapCreator.avatar} alt={selectedMapCreator.name} className="w-full h-full object-cover" />
+            </div>
+            <h3 className="text-lg font-black text-white leading-tight flex items-center gap-1">
+              {selectedMapCreator.name}
+              <span className="text-[#D7FF3F] text-xs">★</span>
+            </h3>
+            <p className="text-xs font-bold text-[#D7FF3F] mt-1">{selectedMapCreator.specialty}</p>
+            <p className="text-[10px] text-[#B5B5B5] font-extrabold uppercase mt-0.5">{selectedMapCreator.distance} away • {selectedMapCreator.activityDetail}</p>
+          </div>
+
+          <div className="border-t border-[#2C3222] pt-4 mb-6">
+            <h5 className="text-[10px] font-black uppercase tracking-wider text-[#8A8A8A] mb-2">Design Concept</h5>
+            <p className="text-xs font-medium text-[#B5B5B5] leading-relaxed italic">
+              "{selectedMapCreator.activeProject}"
+            </p>
+          </div>
+
+          <div className="border-t border-[#2C3222] pt-4 mb-6">
+            <h5 className="text-[10px] font-black uppercase tracking-wider text-[#8A8A8A] mb-2.5">Core Skills</h5>
+            <div className="flex flex-wrap gap-1.5">
+              {(selectedMapCreator.skillTags || []).map((tag) => (
+                <span key={tag} className="bg-[#1A1F12] border border-[#2C3222] text-white text-[9.5px] font-extrabold px-2.5 py-1 rounded-lg">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {selectedMapCreator.portfolioPhotos && selectedMapCreator.portfolioPhotos.length > 0 && (
+            <div className="border-t border-[#2C3222] pt-4 flex-1">
+              <h5 className="text-[10px] font-black uppercase tracking-wider text-[#8A8A8A] mb-2.5">Portfolio Showcase</h5>
+              <div className="grid grid-cols-2 gap-2">
+                {selectedMapCreator.portfolioPhotos.slice(0, 4).map((url, idx) => (
+                  <div key={idx} className="aspect-square rounded-xl overflow-hidden border border-[#2C3222]">
+                    <img src={url} alt="Portfolio Work" className="w-full h-full object-cover" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="pt-4 mt-auto">
+            <button
+              onClick={() => {
+                if (isGuest) {
+                  if (onNavigateToLogin) onNavigateToLogin();
+                } else {
+                  handleMatchCreated(selectedMapCreator);
+                  setSelectedMapCreator(null);
+                }
+              }}
+              className="w-full h-11 bg-[#D7FF3F] hover:bg-[#cbf52e] text-black rounded-xl text-xs font-black uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-[#D7FF3F]/10"
+            >
+              <span>Connect & Collaborate</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // 2. If no maps creator is selected, show general Active Creators nearby!
+    if (activeTab === 'discover') {
+      return (
+        <div className="p-6 flex flex-col h-full text-left bg-[#141414] text-white">
+          <h4 className="font-extrabold text-xs uppercase tracking-widest text-[#D7FF3F] mb-4">Designers Nearby</h4>
+          <p className="text-[11px] text-[#B5B5B5] font-bold mb-4">Click a designer on the radar or swipe deck to view full project specifications.</p>
+          <div className="space-y-3.5">
+            {creators.slice(0, 4).map((creator) => (
+              <div
+                key={creator.id}
+                onClick={() => setSelectedMapCreator(creator)}
+                className="flex items-center gap-3 p-2.5 rounded-2xl bg-[#1A1F12]/60 hover:bg-[#1A1F12] cursor-pointer border border-[#2C3222] transition-all"
+              >
+                <div className="w-10 h-10 rounded-full overflow-hidden border border-[#2C3222] flex-shrink-0">
+                  <img src={creator.avatar} alt={creator.name} className="w-full h-full object-cover" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-black text-white truncate">{creator.name}</p>
+                  <p className="text-[10px] text-[#B5B5B5] font-extrabold uppercase truncate">{creator.specialty}</p>
+                </div>
+                <span className="text-[9px] font-black text-[#D7FF3F] uppercase bg-[#D7FF3F]/10 px-2 py-0.5 rounded-md flex-shrink-0 border border-[#D7FF3F]/20">{creator.distance}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // 3. For chat, we can show active thread or general stats
+    if (activeTab === 'chat') {
+      return (
+        <div className="p-6 flex flex-col h-full text-left bg-[#141414] text-white">
+          <h4 className="font-extrabold text-xs uppercase tracking-widest text-[#D7FF3F] mb-4">Studio Security</h4>
+          <p className="text-xs text-[#B5B5B5] font-semibold leading-relaxed mb-4">
+            Aura protects creative integrity. Direct Messaging is encrypted end-to-end, and all portfolios are watermarked automatically to prevent AI scraping.
+          </p>
+          <div className="bg-[#1A1F12] border border-[#2C3222] p-4 rounded-2xl space-y-3.5">
+            <div className="flex gap-2.5 items-start">
+              <span className="text-xs">🛡️</span>
+              <div>
+                <h6 className="text-[11px] font-black text-white uppercase">AI Scraping Shield</h6>
+                <p className="text-[10px] text-[#B5B5B5] font-bold mt-0.5">Scraper blocks prevent crawling of published portfolios.</p>
+              </div>
+            </div>
+            <div className="flex gap-2.5 items-start">
+              <span className="text-xs">🔐</span>
+              <div>
+                <h6 className="text-[11px] font-black text-white uppercase">Secure Handshake</h6>
+                <p className="text-[10px] text-[#B5B5B5] font-bold mt-0.5">Chat channels only unlock after a mutual connection is signed.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  // Rendering Desktop Dashboard with Left sidebar and Right modular space
+  if (viewport === 'desktop') {
+    return (
+      <div className="relative w-full h-full bg-[#FFFFFF] text-[#1B1C1C] overflow-hidden flex font-sans select-none">
+        
+        {/* Left Sidebar Navigation */}
+        <aside className="w-72 bg-[#FFFFFF] border-r border-[#EEEEEE] flex flex-col justify-between z-50 h-full flex-shrink-0 shadow-[1px_0_5px_rgba(0,0,0,0.02)]">
+          <div className="flex flex-col gap-8 p-6">
+            {/* Logo / App Name */}
+            <div className="flex items-center gap-2 px-2">
+              <span className="font-sans text-2xl font-extrabold text-[#1B1C1C] tracking-tight">Anvio Talk</span>
+              <span className="bg-[#854C6F]/10 text-[#854C6F] font-bold text-[9px] px-2.5 py-0.5 rounded-full uppercase tracking-wider border border-[#854C6F]/20">BETA</span>
+            </div>
+
+            {/* Nav Links */}
+            <nav className="flex flex-col gap-1.5">
+              {[
+                { id: 'home', label: 'Home Feed', icon: Globe },
+                { id: 'discover', label: 'Discover Match', icon: Compass },
+                { id: 'stories', label: 'Stories Feed', icon: Film },
+                { id: 'chat', label: 'Collaboration Chat', icon: MessageSquare },
+                { id: 'search', label: 'Search Creators', icon: Search },
+                {
+                  id: 'notifications',
+                  label: 'Notifications',
+                  icon: Bell,
+                  badge: unreadCount > 0 ? unreadCount : undefined
+                },
+                { id: 'profile', label: 'My Portfolio', icon: User }
+              ].map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id as any);
+                      if (item.id === 'notifications') {
+                        handleMarkNotificationsRead();
+                      }
+                    }}
+                    className={`flex items-center justify-between px-4 py-3 rounded-2xl text-[13px] font-bold tracking-wide transition-all duration-200 cursor-pointer text-left ${
+                      isActive
+                        ? 'bg-[#854C6F]/10 text-[#854C6F] border border-[#854C6F]/20'
+                        : 'text-[#444748] hover:text-[#1B1C1C] hover:bg-[#FBF9F9]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Icon className={`w-4.5 h-4.5 ${isActive ? 'text-[#854C6F]' : 'text-[#444748]'}`} />
+                      <span>{item.label}</span>
+                    </div>
+                    {item.badge !== undefined && (
+                      <span className="bg-[#854C6F] text-white text-[9px] px-1.5 py-0.5 rounded-full font-black animate-pulse">
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+
+          {/* Bottom Profile Section */}
+          <div className="p-6 border-t border-[#EEEEEE]">
+            <div 
+              onClick={() => setActiveTab('profile')}
+              className={`flex items-center gap-3 p-2 rounded-2xl hover:bg-[#FBF9F9] cursor-pointer transition-all border ${activeTab === 'profile' ? 'border-[#854C6F] bg-[#FBF9F9]' : 'border-transparent hover:border-[#E8E8E8]'}`}
+            >
+              <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-[#854C6F] flex-shrink-0">
+                <img 
+                  className="w-full h-full object-cover" 
+                  src={isGuest ? getDefaultAvatar() : getUserAvatar(userProfile)}
+                  alt="My profile" 
+                />
+              </div>
+              <div className="text-left min-w-0 flex-1">
+                <p className="text-xs font-black text-[#1B1C1C] truncate">{isGuest ? 'Guest User' : userProfile?.fullName || userProfile?.displayName || 'Alex Mercer'}</p>
+                <p className="text-[10px] text-[#444748] font-bold truncate">@{isGuest ? 'guest' : userProfile?.username || 'alexmercer'}</p>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        {/* Center content / Workspace Panel */}
+        <main className="flex-1 h-full min-w-0 flex flex-col relative bg-[#0A0A0A] text-white">
+          {renderSetupReminderBanner()}
+          <div className="flex-1 flex relative w-full h-full min-h-0">
+          
+          <AnimatePresence mode="wait">
+            
+            {/* ==================== HOME TAB (STORIES FEED) ==================== */}
+            {activeTab === 'home' && (
+              <motion.div 
+                key="desktop-home-tab"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="w-full h-full flex flex-col p-8 bg-[#0A0A0A] overflow-y-auto custom-scrollbar"
+              >
+                <div className="max-w-[720px] mx-auto w-full space-y-8">
+                  
+                  {/* Header title */}
+                  <div className="text-left">
+                    <h2 className="text-3xl font-black tracking-tight mb-2 text-white">Moments &amp; Concept Stories</h2>
+                    <p className="text-xs text-[#B5B5B5] font-bold">Swap daily sketches and work-in-progress snapshots with nearby creatives.</p>
+                  </div>
+
+                  {/* Horizontal scrolling Stories bar */}
+                  <div className="flex gap-6 pb-4 overflow-x-auto no-scrollbar">
+                    {/* 1. Dynamic "My Story" (Instagram Style) */}
+                    {(() => {
+                      try {
+                        const activeStories = stories || [];
+                        const myStory = activeStories.find(s => s && s.creatorId === 'me');
+                        const myAvatar = isGuest ? getDefaultAvatar() : getUserAvatar(userProfile);
+
+                        if (uploadingStory) {
+                          return (
+                            <div
+                              key="desktop-uploading-story"
+                              onClick={() => {
+                                if (uploadingStory.failed) {
+                                  handlePublishStory(uploadingStory.thumbnail, uploadingStory.caption, uploadingStory.audience);
+                                }
+                              }}
+                              className={`flex-shrink-0 flex flex-col items-center gap-2.5 text-center relative w-22 select-none ${
+                                uploadingStory.failed ? 'cursor-pointer' : ''
+                              }`}
+                            >
+                              <div className="relative">
+                                <div className="relative w-22 h-22 flex items-center justify-center">
+                                  {/* Circular Progress SVG Ring */}
+                                  <svg className="absolute inset-0 w-22 h-22 -rotate-90 pointer-events-none">
+                                    <circle
+                                      cx="44"
+                                      cy="44"
+                                      r="40"
+                                      fill="transparent"
+                                      stroke="#2C3222"
+                                      strokeWidth="3.5"
+                                    />
+                                    <circle
+                                      cx="44"
+                                      cy="44"
+                                      r="40"
+                                      fill="transparent"
+                                      stroke={uploadingStory.failed ? "#ef4444" : "#D7FF3F"}
+                                      strokeWidth="3.5"
+                                      strokeDasharray={2 * Math.PI * 40}
+                                      strokeDashoffset={2 * Math.PI * 40 * (1 - (uploadingStory.progress || 0) / 100)}
+                                      strokeLinecap="round"
+                                      className="transition-all duration-300 ease-out"
+                                    />
+                                  </svg>
+
+                                  <div className="w-[76px] h-[76px] rounded-full overflow-hidden bg-[#141414] flex items-center justify-center p-[2px]">
+                                    <img
+                                      src={uploadingStory.thumbnail || myAvatar}
+                                      alt="Uploading..."
+                                      className={`w-full h-full rounded-full object-cover ${uploadingStory.failed ? 'opacity-40 brightness-75' : 'opacity-85'}`}
+                                    />
+                                  </div>
+
+                                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    {uploadingStory.failed ? (
+                                      <div className="bg-rose-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-md flex items-center gap-1 pointer-events-auto">
+                                        <RotateCcw className="w-3 h-3" /> Retry
+                                      </div>
+                                    ) : (
+                                      <span className="text-[10px] font-black text-black bg-[#D7FF3F] px-2 py-0.5 rounded-full shadow-md border border-black/20">
+                                        {uploadingStory.progress}%
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <span className={`text-[10.5px] font-extrabold truncate w-20 ${uploadingStory.failed ? 'text-rose-600 font-black' : 'text-[#D7FF3F] animate-pulse'}`}>
+                                {uploadingStory.failed ? 'Failed (Retry)' : 'Uploading...'}
+                              </span>
+                            </div>
+                          );
+                        }
+
+                        if (myStory) {
+                          const originalIdx = activeStories.findIndex(s => s && s.creatorId === 'me');
+                          const isUnviewed = myStory.id && !(viewedStoryIds || []).includes(myStory.id);
+                          return (
+                            <div
+                              key="desktop-active-story"
+                              onClick={() => {
+                                if (originalIdx >= 0) {
+                                  setActiveStoryIdx(originalIdx);
+                                  if (isUnviewed && myStory.id) {
+                                    setViewedStoryIds(prev => [...(prev || []), myStory.id]);
+                                  }
+                                }
+                              }}
+                              className="flex-shrink-0 flex flex-col items-center gap-2.5 cursor-pointer text-center group"
+                            >
+                              <div className="relative">
+                                <div className={`w-22 h-22 rounded-full p-[3px] shadow-sm flex items-center justify-center transition-transform group-hover:scale-105 duration-250 ${
+                                  isUnviewed
+                                    ? 'bg-gradient-to-tr from-[#D7FF3F] via-[#6E8A2B] to-[#D7FF3F]'
+                                    : 'bg-[#2C3222]'
+                                }`}>
+                                  <div className="w-full h-full rounded-full bg-[#0A0A0A] p-[2.5px] flex items-center justify-center overflow-hidden">
+                                    <img src={myAvatar} alt="My Story" className="w-full h-full rounded-full object-cover" />
+                                  </div>
+                                </div>
+
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAddStory();
+                                  }}
+                                  className="absolute bottom-0 right-0 w-6 h-6 bg-[#D7FF3F] hover:bg-[#cbf52e] text-black font-black rounded-full flex items-center justify-center border-2 border-[#0A0A0A] shadow-md transition-colors z-10"
+                                >
+                                  <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                                </button>
+                              </div>
+                              <span className="text-[10.5px] font-extrabold text-[#B5B5B5] group-hover:text-white transition-colors truncate w-20">
+                                My Story
+                              </span>
+                            </div>
+                          );
+                        } else {
+                          return (
+                            <div
+                              key="desktop-add-story"
+                              onClick={handleAddStory}
+                              className="flex-shrink-0 flex flex-col items-center gap-2.5 cursor-pointer text-center group"
+                            >
+                              <div className="relative">
+                                <div className="w-22 h-22 rounded-full p-[3px] shadow-sm flex items-center justify-center transition-transform group-hover:scale-105 duration-250 bg-[#2C3222] group-hover:bg-gradient-to-tr group-hover:from-[#D7FF3F] group-hover:via-[#6E8A2B] group-hover:to-[#D7FF3F]">
+                                  <div className="w-full h-full rounded-full bg-[#0A0A0A] p-[2.5px] flex items-center justify-center overflow-hidden">
+                                    <img src={myAvatar} alt="Add Story" className="w-full h-full rounded-full object-cover opacity-85 group-hover:opacity-100 transition-opacity" />
+                                  </div>
+                                </div>
+
+                                <div className="absolute bottom-0 right-0 w-6 h-6 bg-[#D7FF3F] text-black font-black rounded-full flex items-center justify-center border-2 border-[#0A0A0A] shadow-md z-10">
+                                  <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                                </div>
+                              </div>
+                              <span className="text-[10.5px] font-extrabold text-[#8A8A8A] group-hover:text-[#D7FF3F] transition-colors truncate w-20">
+                                My Story
+                              </span>
+                            </div>
+                          );
+                        }
+                      } catch (e) { return null; }
+                    })()}
+
+                    {/* 2. Other creators' stories list */}
+                    {(stories || []).filter(s => s && s.creatorId !== 'me').map((story) => {
+                      const originalIdx = (stories || []).findIndex(s => s && s.id === story.id);
+                      const isUnviewed = story.id && !(viewedStoryIds || []).includes(story.id);
+                      return (
+                        <div
+                          key={story.id}
+                          onClick={() => {
+                            if (originalIdx >= 0) {
+                              setActiveStoryIdx(originalIdx);
+                              if (isUnviewed && story.id) {
+                                setViewedStoryIds(prev => [...(prev || []), story.id]);
+                              }
+                            }
+                          }}
+                          className="flex-shrink-0 flex flex-col items-center gap-2.5 cursor-pointer text-center group"
+                        >
+                          <div className="relative">
+                            <div className={`w-22 h-22 rounded-full p-[3px] shadow-sm flex items-center justify-center transition-transform group-hover:scale-105 duration-250 ${
+                              isUnviewed
+                                ? 'bg-gradient-to-tr from-[#D7FF3F] via-[#6E8A2B] to-[#D7FF3F]'
+                                : 'bg-[#2C3222]'
+                            }`}>
+                              <div className="w-full h-full rounded-full bg-[#0A0A0A] p-[2.5px] flex items-center justify-center overflow-hidden">
+                                <img src={story.creatorAvatar} alt="" className="w-full h-full rounded-full object-cover" />
+                              </div>
+                            </div>
+                          </div>
+                          <span className="text-[10.5px] font-extrabold text-[#B5B5B5] group-hover:text-white transition-colors truncate w-20">
+                            {(story.creatorName || 'Creator').split(' ')[0]}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Seed Feed Cards */}
+                  <div className="space-y-6">
+                    {(creators || []).map((creator, idx) => {
+                      if (!creator) return null;
+                      const story = getStoryForCreator(creator.id);
+                      return (
+                        <React.Fragment key={creator.id}>
+                          <CreatorFeedCard 
+                            creator={creator}
+                            story={story}
+                            storyStatus={getStoryStatus(creator.id)}
+                            isGuest={isGuest}
+                            onNavigateToLogin={onNavigateToLogin}
+                            isSaved={savedCreatorIds.includes(creator.id)}
+                            onToggleSave={() => handleToggleBookmark(creator.id)}
+                            onSelectCreator={(c) => {
+                              setSelectedProfileCreator(c);
+                              setSelectedProfileStory(story);
+                            }}
+                            onMessageInterest={(c) => {
+                              if (isGuest) {
+                                if (onNavigateToLogin) onNavigateToLogin();
+                              } else {
+                                handleMatchCreated(c);
+                              }
+                            }}
+                          />
+                          {(idx + 1) % 3 === 0 && (
+                            <AdPlacement placement="home_feed" format="inline-card" adIndex={idx} />
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+
+                </div>
+              </motion.div>
+            )}
+
+            {/* ==================== STORIES TAB ==================== */}
+            {activeTab === 'stories' && (
+              <motion.div 
+                key="desktop-stories-tab"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="w-full h-full flex flex-col bg-[#fbf9f9] overflow-hidden"
+              >
+                <StoriesFeedScreen 
+                  onSelectCreator={setSelectedMapCreator} 
+                  onOpenChat={(authorUid) => setActiveTab('chat')}
+                />
+              </motion.div>
+            )}
+
+            {/* ==================== DISCOVER TAB (MAP + SWIPE DECK) ==================== */}
+            {activeTab === 'discover' && (
+              <motion.div 
+                key="desktop-discover-tab"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="w-full h-full flex"
+              >
+                {/* Side connections bar */}
+                <aside className="w-[340px] bg-white border-r border-[#efeded] p-6 flex flex-col justify-between shadow-[20px_0_40px_-15px_rgba(0,0,0,0.01)] h-full overflow-hidden">
+                  <div className="flex-1 flex flex-col overflow-hidden min-h-0 text-left">
+                    
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-6 flex-shrink-0">
+                      <div>
+                        <h3 className="text-lg font-black tracking-tight">Explore nearby</h3>
+                        <p className="text-[11px] text-slate-500 font-bold mt-0.5">Interactive swipe matching with nearby visual designers.</p>
+                      </div>
+                    </div>
+
+                    {/* Skill chip filters (ONLY FOR MAP VIEW) */}
+                    {discoverMode === 'map' && (
+                      <div className="mb-6 flex-shrink-0">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-[#854c6f] block mb-2.5">Filter specialties</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          <button
+                            onClick={() => setSelectedSkill(null)}
+                            className={`px-3 py-1.5 text-[10px] font-bold rounded-xl transition-all cursor-pointer ${
+                              selectedSkill === null
+                                ? 'bg-[#1b1c1c] text-white shadow-sm'
+                                : 'bg-[#efeded]/70 text-[#444748] hover:bg-[#efeded]'
+                            }`}
+                          >
+                            All
+                          </button>
+                          {TRENDING_SKILLS.slice(0, 5).map(skill => (
+                            <button
+                              key={skill}
+                              onClick={() => setSelectedSkill(selectedSkill === skill ? null : skill)}
+                              className={`px-3 py-1.5 text-[10px] font-bold rounded-xl transition-all cursor-pointer ${
+                                selectedSkill === skill
+                                  ? 'bg-[#854c6f] text-white shadow-sm'
+                                  : 'bg-[#efeded]/70 text-[#444748] hover:bg-[#efeded]'
+                              }`}
+                            >
+                              {skill}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Sidebar Connections List */}
+                    <div className="flex-1 overflow-y-auto pr-1 min-h-0">
+                      <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-3">NEARBY CREATORS ({(filteredCreators || []).length})</span>
+                      <div className="space-y-2">
+                        {(filteredCreators || []).map(creator => {
+                          if (!creator || !creator.id) return null;
+                          return (
+                            <div
+                              key={creator.id}
+                              onMouseEnter={() => setHoveredCreator(creator)}
+                              onMouseLeave={() => setHoveredCreator(null)}
+                              onClick={() => {
+                                setActiveCreatorPin(creator.id);
+                                if (isGuest) {
+                                  if (onNavigateToLogin) onNavigateToLogin();
+                                }
+                              }}
+                              className={`flex items-center gap-3.5 p-2.5 rounded-2xl hover:bg-[#fbf9f9] border border-transparent transition-all cursor-pointer ${
+                                hoveredCreator?.id === creator.id ? 'border-[#ffd8eb] bg-white shadow-sm' : ''
+                              }`}
+                            >
+                              <div className="w-11 h-11 rounded-2xl overflow-hidden bg-slate-100 flex-shrink-0 border border-slate-100">
+                                <img src={creator.avatar} alt="" className="w-full h-full object-cover" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-black text-black truncate">{creator.name}</p>
+                                <p className="text-[10px] text-slate-500 font-semibold">{creator.specialty} • {creator.distance}</p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                  </div>
+                </aside>
+
+                {/* Right display pane (Map vs Swipeable deck) */}
+                <div className="flex-1 relative bg-[#efeded]/30 overflow-hidden flex items-center justify-center h-full">
+                  <AnimatePresence mode="wait">
+                    {discoverMode === 'map' ? (
+                      <motion.div 
+                        key="desktop-map-view"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="absolute inset-0 flex items-center justify-center"
+                      >
+                        {/* Desktop Interstitial Return Button */}
+                        <div className="absolute top-6 left-6 z-30">
+                          <button
+                            onClick={() => {
+                              setDiscoverMode('swipe');
+                              setSwipedCount(0);
+                            }}
+                            className="bg-white border border-[#efeded] hover:border-black text-[#1b1c1c] h-11 px-5 rounded-full font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-md hover:shadow-lg transition-all"
+                          >
+                            <Compass className="w-4 h-4 text-[#854c6f]" /> Continue Matching
+                          </button>
+                        </div>
+
+                        {/* Map grid decoration */}
+                        <div className="absolute inset-0 opacity-[0.04] pointer-events-none" style={{
+                          backgroundImage: 'radial-gradient(circle at 1px 1px, #000000 1.5px, transparent 0)',
+                          backgroundSize: '40px 40px'
+                        }} />
+
+                        {/* Radial Rings */}
+                        <div className="absolute w-[600px] h-[600px] border border-[#854c6f]/5 rounded-full flex items-center justify-center pointer-events-none">
+                          <div className="absolute w-[400px] h-[400px] border border-[#854c6f]/10 rounded-full flex items-center justify-center">
+                            <div className="absolute w-[200px] h-[200px] border border-[#854c6f]/15 rounded-full" />
+                          </div>
+                        </div>
+
+                        {/* Center Focal Pin (User) */}
+                        <div className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 z-10">
+                          <div className="relative flex items-center justify-center">
+                            <span className="absolute w-12 h-12 bg-[#854c6f]/25 rounded-full animate-ping" />
+                            {(() => {
+                              const myStoryStatus = getStoryStatus('me');
+                              const myRingClasses = myStoryStatus === 'gradient'
+                                ? 'bg-gradient-to-tr from-[#854c6f] via-[#feb7df] to-[#854c6f] p-[3px] rounded-full shadow-md'
+                                : myStoryStatus === 'grey'
+                                ? 'bg-[#efeded] p-[3px] rounded-full shadow-md'
+                                : '';
+                              return (
+                                <div className={`${myRingClasses} transition-all duration-200`}>
+                                  <div className="w-12 h-12 bg-[#854c6f] text-white rounded-full flex items-center justify-center font-extrabold text-xs shadow-xl border border-white z-10">
+                                    Me
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        </div>
+
+                        {/* Satellite Creator Pins */}
+                        <div className="absolute inset-0 z-20 pointer-events-none">
+                          <AnimatePresence>
+                            {getActiveMapCreators().map(creator => {
+                              const isHovered = hoveredCreator?.id === creator.id;
+                              const isSelected = activeCreatorPin === creator.id;
+                              const storyStatus = getStoryStatus(creator.id);
+                              const ringClasses = storyStatus === 'gradient'
+                                ? 'bg-gradient-to-tr from-[#854c6f] via-[#feb7df] to-[#854c6f] p-[3px] rounded-[1.4rem] shadow-md'
+                                : storyStatus === 'grey'
+                                ? 'bg-[#efeded] p-[3px] rounded-[1.4rem] shadow-md'
+                                : '';
+
+                              return (
+                                <motion.div 
+                                  key={creator.id}
+                                  initial={{ opacity: 0, scale: 0.7 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  exit={{ opacity: 0, scale: 0.7 }}
+                                  transition={{ duration: 0.5 }}
+                                  className="absolute pointer-events-auto"
+                                  style={{ left: `${creator.x}%`, top: `${creator.y}%` }}
+                                >
+                                  <div className="relative">
+                                    {creator.status === 'active' && (
+                                      <span className="absolute -inset-1.5 bg-[#854c6f]/20 rounded-full animate-pulse" />
+                                    )}
+
+                                    <div className={`${ringClasses} transition-all duration-200`}>
+                                      <button
+                                        onClick={() => {
+                                          if (isGuest) {
+                                            if (onNavigateToLogin) onNavigateToLogin();
+                                          } else {
+                                            setActiveCreatorPin(isSelected ? null : creator.id);
+                                          }
+                                        }}
+                                        onMouseEnter={() => setHoveredCreator(creator)}
+                                        onMouseLeave={() => setHoveredCreator(null)}
+                                        className={`relative w-14 h-14 bg-white p-0.5 rounded-[1.2rem] shadow-xl border hover:scale-110 active:scale-95 transition-all z-10 cursor-pointer ${
+                                          isHovered || isSelected ? 'border-[#854c6f]' : 'border-transparent'
+                                        }`}
+                                      >
+                                        <img src={creator.avatar} alt="" className="w-full h-full object-cover rounded-[1rem]" />
+                                        {creator.badgeType && creator.badgeType !== 'none' && (
+                                          <div className="absolute -top-1.5 -right-1.5 bg-[#854c6f] w-5 h-5 rounded-full border border-white flex items-center justify-center shadow-sm">
+                                            {getBadgeIcon(creator.badgeType)}
+                                          </div>
+                                        )}
+                                      </button>
+                                    </div>
+
+                                    {/* Hover detail card */}
+                                    <AnimatePresence>
+                                      {(isHovered || isSelected) && (
+                                        <motion.div
+                                          initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                                          exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                                          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 bg-white/95 backdrop-blur-xl p-4 rounded-2xl w-60 shadow-[0_24px_50px_rgba(0,0,0,0.12)] border border-white/50 text-left z-30 pointer-events-auto"
+                                        >
+                                          <p className="text-[13px] font-black text-black flex items-center justify-between">
+                                            {creator.name}
+                                            <span className="text-[10px] font-bold text-[#854c6f]">{creator.distance}</span>
+                                          </p>
+                                          <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wide mb-1.5">{creator.specialty}</p>
+                                          <p className="text-[11px] text-[#444748] font-semibold mb-3 border-t border-slate-100 pt-2 italic">"{creator.activeProject}"</p>
+
+                                          <button
+                                            onClick={() => {
+                                              if (isGuest) {
+                                                if (onNavigateToLogin) onNavigateToLogin();
+                                              } else {
+                                                handleMatchCreated(creator);
+                                                setActiveCreatorPin(null);
+                                              }
+                                            }}
+                                            className="w-full h-9 bg-[#1b1c1c] text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1 hover:bg-[#854c6f] transition-colors"
+                                          >
+                                            Connect Now 🤝
+                                          </button>
+                                        </motion.div>
+                                      )}
+                                    </AnimatePresence>
+                                  </div>
+                                </motion.div>
+                              );
+                            })}
+                          </AnimatePresence>
+                        </div>
+
+                      </motion.div>
+                    ) : (
+                      <motion.div 
+                        key="desktop-swipe-view"
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        className="w-full h-full flex items-center justify-center"
+                      >
+                        <SwipeCards 
+                          creators={creators}
+                          chats={chats}
+                          stories={stories}
+                          isGuest={isGuest}
+                          onNavigateToLogin={onNavigateToLogin}
+                          onMatchCreated={handleMatchCreated}
+                          onBlockUser={handleBlockUser}
+                          onReportUser={handleReportUser}
+                          onOpenReportModal={handleOpenReportModal}
+                          onCardSwiped={handleCardSwiped}
+                          onChatShortcut={handleChatShortcut}
+                          onStoryShortcut={handleStoryShortcut}
+                          savedCreatorIds={savedCreatorIds}
+                          onToggleBookmark={handleToggleBookmark}
+                          onToggleFollow={handleToggleFollow}
+                          outgoingFollows={outgoingFollows}
+                          onSelectCreator={setSelectedProfileCreator}
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+              </motion.div>
+            )}
+
+            {/* ==================== CHAT TAB (DIRECT & GROUPS) ==================== */}
+            {activeTab === 'chat' && (
+              <motion.div 
+                key="desktop-chat-tab"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="w-full h-full"
+              >
+              <ErrorBoundary fallback={
+                <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-white border border-[#efeded] rounded-3xl">
+                  <span className="text-2xl">💬</span>
+                  <h4 className="text-sm font-black text-slate-800 mt-3 mb-1">Chat Window Error</h4>
+                  <p className="text-[11px] text-slate-400 font-bold mb-4">An error occurred loading the message history. Try refreshing the chat module.</p>
+                  <button onClick={() => window.location.reload()} className="px-4 py-1.5 bg-[#1b1c1c] text-white rounded-full text-[10px] font-black uppercase tracking-wider cursor-pointer">
+                    Retry Chat
+                  </button>
+                </div>
+              }>
+                <ChatWindow
+                  initialChats={chats}
+                  creators={creators}
+                  isGuest={isGuest}
+                  onNavigateToLogin={onNavigateToLogin}
+                  onBlockUser={handleBlockUser}
+                  onReportUser={handleReportUser}
+                  onOpenReportModal={handleOpenReportModal}
+                  activeChatId={activeChatId}
+                  onActiveChatChange={setOpenChatId}
+                  onSelectCreator={setSelectedProfileCreator}
+                  stories={stories}
+                  onBackToMap={() => setActiveTab('home')}
+                  onViewStory={(idx) => {
+                    setActiveStoryIdx(idx);
+                    const story = stories[idx];
+                    if (story && !viewedStoryIds.includes(story.id)) {
+                      setViewedStoryIds(prev => [...prev, story.id]);
+                    }
+                  }}
+                  uploadingStory={uploadingStory}
+                  onRetryStoryUpload={() => {
+                    if (uploadingStory) {
+                      handlePublishStory(uploadingStory.thumbnail, uploadingStory.caption, uploadingStory.audience);
+                    }
+                  }}
+                />
+              </ErrorBoundary>
+              </motion.div>
+            )}
+
+            {/* ==================== PROFILE TAB (PORTFOLIO, SETTINGS, PAYWALL) ==================== */}
+            {activeTab === 'profile' && (
+              <motion.div 
+                key="desktop-profile-tab"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="w-full h-full"
+              >
+                <ProfileTab 
+                  profile={userProfile}
+                  chats={chats}
+                  creators={creators}
+                  isGuest={isGuest}
+                  onUpdateProfile={setUserProfile}
+                  onNavigateToLogin={onNavigateToLogin}
+                  onNavigateToTab={handleNavigateToTab}
+                  savedCreatorIds={savedCreatorIds}
+                  onToggleBookmark={handleToggleBookmark}
+                  onUnblockUser={handleUnblockUser}
+                />
+              </motion.div>
+            )}
+
+            {/* ==================== NOTIFICATIONS TAB ==================== */}
+            {activeTab === 'notifications' && (
+              <motion.div
+                key="desktop-notifications-tab"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="w-full h-full"
+              >
+                <NotificationsTab
+                  notifications={notifications}
+                  onNavigateToCreator={(creatorId) => {
+                    const creator = creators.find(c => c.id === creatorId);
+                    if (creator) {
+                      setSelectedProfileCreator(creator);
+                    }
+                  }}
+                  onDeleteNotification={handleDeleteNotification}
+                  onLaunchStory={handleLaunchStory}
+                />
+              </motion.div>
+            )}
+
+            {/* ==================== SEARCH TAB ==================== */}
+            {activeTab === 'search' && (
+              <motion.div
+                key="desktop-search-tab"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="w-full h-full"
+              >
+                <ErrorBoundary>
+                  <SearchScreen
+                    onSelectCreator={(creator) => {
+                      setSelectedProfileCreator(creator);
+                    }}
+                  />
+                </ErrorBoundary>
+              </motion.div>
+            )}
+
+          </AnimatePresence>
+
+        </div>
+
+        {/* Collapsible notifications dropdown panel overlay */}
+        <AnimatePresence>
+          {showNotificationsList && (
+            <motion.div
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 15 }}
+              className="absolute top-20 right-10 w-96 bg-white border border-[#efeded] rounded-[2rem] shadow-2xl z-[100] text-left p-6 flex flex-col max-h-[500px]"
+            >
+              <div className="flex items-center justify-between border-b border-[#fbf9f9] pb-4 mb-4">
+                <h4 className="font-extrabold text-sm flex items-center gap-2"><Bell className="w-4 h-4 text-[#854c6f]" /> Notifications</h4>
+                <button
+                  onClick={() => setShowNotificationsList(false)}
+                  className="w-6 h-6 hover:bg-slate-50 rounded-full flex items-center justify-center text-[#444748]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-3.5 custom-scrollbar pr-1">
+                {notifications.map(notif => (
+                  <div key={notif.id} className="flex gap-3 items-start p-2 hover:bg-slate-50 rounded-2xl transition-colors relative group">
+                    {!notif.isRead && <span className="absolute left-1 top-4 w-1.5 h-1.5 bg-[#854c6f] rounded-full" />}
+
+                    {notif.avatar && (
+                      <img src={notif.avatar} alt="" className="w-9 h-9 rounded-full object-cover mt-0.5 border" />
+                    )}
+
+                    <div className="flex-1 text-left pr-6">
+                      <p className="text-xs font-extrabold text-[#1b1c1c]">{notif.title}</p>
+                      <p className="text-[10.5px] text-[#444748] font-medium leading-relaxed mt-0.5">{notif.description}</p>
+                      <span className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider block mt-1">{notif.timestamp}</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteNotification(notif.id);
+                      }}
+                      className="absolute top-2 right-2 p-1 rounded-full text-slate-400 hover:text-rose-500 hover:bg-slate-100 transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
+                      title="Delete notification"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Floating live alerts toast */}
+        <AnimatePresence>
+          {showNotificationToast && (
+            <motion.div
+              initial={{ x: 100, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 100, opacity: 0 }}
+              className="fixed top-24 right-10 z-[140] bg-white p-4 rounded-[1.5rem] flex items-center gap-4 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.12)] border-l-4 border-[#854c6f] border border-[#efeded]"
+            >
+              <div className="w-12 h-12 rounded-2xl overflow-hidden bg-slate-200 shrink-0 border">
+                <img className="w-full h-full object-cover" src={toastMessage.avatar} alt="" />
+              </div>
+              <div className="text-left">
+                <p className="text-[13px] text-black font-extrabold leading-tight">{toastMessage.title}</p>
+                <p className="text-[11px] text-[#444748] font-medium">{toastMessage.desc}</p>
+              </div>
+              <button
+                onClick={() => setShowNotificationToast(false)}
+                className="ml-4 w-8 h-8 flex items-center justify-center rounded-full hover:bg-black/5"
+              >
+                <X className="w-4 h-4 text-[#444748]" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Story Viewer screen overlay */}
+        {activeStoryIdx !== null && (
+          <StoryViewer
+            stories={stories}
+            initialStoryIndex={activeStoryIdx}
+            onClose={() => setActiveStoryIdx(null)}
+            onAddView={(storyId) => {
+              if (!viewedStoryIds.includes(storyId)) {
+                setViewedStoryIds(prev => [...prev, storyId]);
+              }
+            }}
+            onDeleteStory={handleDeleteStory}
+          />
+        )}
+
+        </main>
+
+        {/* Right Sidebar Details Panel (Desktop Exclusive) */}
+        {renderRightPanel() && (
+          <aside className="w-[340px] bg-white border-l border-[#e3e2e2]/50 h-full flex flex-col z-40 flex-shrink-0 overflow-y-auto custom-scrollbar">
+            {renderRightPanel()}
+          </aside>
+        )}
+
+      </div>
+    );
+  }
+
+  // ==================== MOBILE APP VIEW LAYOUT ====================
+  return (
+    <div className="relative w-full h-full bg-[#0A0A0A] text-white overflow-hidden flex flex-col justify-between">
+
+      {/* Dynamic top header bar (Hidden when activeTab === 'chat' or 'discover' so ChatWindow/SwipeCards header appears cleanly at top) */}
+      {activeTab !== 'chat' && activeTab !== 'discover' && (
+        <header 
+          className="fixed top-0 left-0 w-full z-40 bg-[#0A0A0A]/95 backdrop-blur-md border-b border-[#2A2A2A] px-4 flex justify-between items-center select-none"
+          style={{
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+            height: 'calc(64px + env(safe-area-inset-top, 0px))',
+            minHeight: 'calc(64px + env(safe-area-inset-top, 0px))'
+          }}
+        >
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveTab('discover')}>
+            <span className="font-sans text-xl font-black text-white tracking-wider">Anvio Talk</span>
+            <span className="bg-[#E5FF3B]/10 text-[#E5FF3B] font-bold text-[8px] px-2 py-0.5 rounded-full uppercase tracking-wider border border-[#E5FF3B]/20">BETA</span>
+          </div>
+          
+          <div className="flex items-center gap-2">
+
+            {/* Search Button */}
+            <button
+              onClick={() => {
+                setActiveTab(activeTab === 'search' ? 'discover' : 'search');
+              }}
+              className={`w-9 h-9 rounded-full flex items-center justify-center relative border transition-colors cursor-pointer ${
+                activeTab === 'search' ? 'bg-[#E5FF3B] text-black border-[#E5FF3B]' : 'bg-[#141414] text-white border-[#2A2A2A] hover:bg-[#1F1F1F]'
+              }`}
+            >
+              <Search className="w-4 h-4" />
+            </button>
+
+            {/* Notifications bell click */}
+            <button
+              onClick={() => {
+                setActiveTab(activeTab === 'notifications' ? 'discover' : 'notifications');
+                handleMarkNotificationsRead();
+              }}
+              className={`w-9 h-9 rounded-full flex items-center justify-center relative border transition-colors cursor-pointer ${
+                activeTab === 'notifications' ? 'bg-[#E5FF3B] text-black border-[#E5FF3B]' : 'bg-[#141414] text-white border-[#2A2A2A] hover:bg-[#1F1F1F]'
+              }`}
+            >
+              <Bell className="w-4 h-4" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-[#E5FF3B] w-4.5 h-4.5 rounded-full border border-[#0A0A0A] text-[8px] font-extrabold text-black flex items-center justify-center">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+
+            {/* Active indicator or Avatar */}
+            <div
+              onClick={() => setActiveTab('profile')}
+              className="w-9 h-9 rounded-full overflow-hidden border border-[#2A2A2A] cursor-pointer hover:border-[#E5FF3B] transition-colors"
+            >
+              <img className="w-full h-full object-cover" src={isGuest ? getDefaultAvatar() : getUserAvatar(userProfile)} alt="Me" />
+            </div>
+
+          </div>
+        </header>
+      )}
+
+      {renderSetupReminderBanner()}
+
+      {/* Primary body screen section based on active bottom tab */}
+      <main
+        className="flex-1 w-full overflow-hidden relative"
+        style={{
+          paddingTop: '0px',
+          paddingBottom: isChatConversationOpen ? '0px' : 'calc(64px + env(safe-area-inset-bottom, 0px))'
+        }}
+      >
+        <AnimatePresence mode="wait">
+
+          {/* A. Home (Stories & content list) */}
+          {activeTab === 'home' && (
+            <motion.div
+              key="mobile-home-tab"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 overflow-y-auto px-6 pb-24 text-left custom-scrollbar"
+              style={{
+                overscrollBehaviorY: 'contain',
+                paddingTop: 'calc(80px + env(safe-area-inset-top, 0px))'
+              }}
+            >
+              {/* Horizontal Stories bar */}
+              <div className="flex gap-5 pb-4 overflow-x-auto no-scrollbar mb-4 mt-1.5">
+                {/* 1. Dynamic "My Story" (Instagram Style for mobile) */}
+                {(() => {
+                  try {
+                    const activeStories = stories || [];
+                    const myStory = activeStories.find(s => s && s.creatorId === 'me');
+                    const myAvatar = isGuest ? getDefaultAvatar() : getUserAvatar(userProfile);
+
+                    if (uploadingStory) {
+                      return (
+                        <div
+                          key="mobile-uploading-story"
+                          onClick={() => {
+                            if (uploadingStory.failed) {
+                              handlePublishStory(uploadingStory.thumbnail, uploadingStory.caption, uploadingStory.audience);
+                            }
+                          }}
+                          className={`flex-shrink-0 flex flex-col items-center gap-2.5 text-center relative w-20 select-none ${
+                            uploadingStory.failed ? 'cursor-pointer' : ''
+                          }`}
+                        >
+                          <div className="relative">
+                          <div className="relative w-20 h-20 flex items-center justify-center">
+                            {/* Circular Progress SVG Ring - STATIC, NOT ROTATING */}
+                            <svg className="absolute inset-0 w-20 h-20 -rotate-90 pointer-events-none">
+                              <circle
+                                cx="40"
+                                cy="40"
+                                r="36"
+                                fill="transparent"
+                                stroke="#e2e8f0"
+                                strokeWidth="3.5"
+                              />
+                              <circle
+                                cx="40"
+                                cy="40"
+                                r="36"
+                                fill="transparent"
+                                stroke={uploadingStory.failed ? "#ef4444" : "#854c6f"}
+                                strokeWidth="3.5"
+                                strokeDasharray={2 * Math.PI * 36}
+                                strokeDashoffset={2 * Math.PI * 36 * (1 - (uploadingStory.progress || 0) / 100)}
+                                strokeLinecap="round"
+                                className="transition-all duration-300 ease-out"
+                              />
+                            </svg>
+
+                            {/* Stationary Avatar Image */}
+                            <div className="w-[68px] h-[68px] rounded-full overflow-hidden bg-slate-100 flex items-center justify-center p-[2px]">
+                              <img
+                                src={uploadingStory.thumbnail || myAvatar}
+                                alt="Uploading..."
+                                className={`w-full h-full rounded-full object-cover ${uploadingStory.failed ? 'opacity-40 brightness-75' : 'opacity-85'}`}
+                              />
+                            </div>
+
+                            {/* Status Overlay Badge */}
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                              {uploadingStory.failed ? (
+                                <div className="bg-rose-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full shadow-md flex items-center gap-1 pointer-events-auto">
+                                  <RotateCcw className="w-2.5 h-2.5" /> Retry
+                                </div>
+                              ) : (
+                                <span className="text-[9px] font-black text-white bg-[#854c6f] px-1.5 py-0.5 rounded-full shadow-md border border-white/40">
+                                  {uploadingStory.progress}%
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          </div>
+                          <span className={`text-[9.5px] font-extrabold truncate w-16 ${uploadingStory.failed ? 'text-rose-600 font-black' : 'text-[#854c6f] animate-pulse'}`}>
+                            {uploadingStory.failed ? 'Failed (Retry)' : 'Uploading...'}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    if (myStory) {
+                      const originalIdx = activeStories.findIndex(s => s && s.creatorId === 'me');
+                      const isUnviewed = myStory.id && !(viewedStoryIds || []).includes(myStory.id);
+                      return (
+                        <div
+                          key="mobile-active-story"
+                          onClick={() => {
+                            if (originalIdx >= 0) {
+                              setActiveStoryIdx(originalIdx);
+                              if (isUnviewed && myStory.id) {
+                                setViewedStoryIds(prev => [...(prev || []), myStory.id]);
+                              }
+                            }
+                          }}
+                          className="flex-shrink-0 flex flex-col items-center gap-2.5 cursor-pointer text-center group"
+                        >
+                          <div className="relative">
+                            <div className={`w-20 h-20 rounded-full p-[3px] shadow-sm flex items-center justify-center transition-transform group-hover:scale-105 duration-250 ${
+                              isUnviewed
+                                ? 'bg-gradient-to-tr from-[#854c6f] via-[#feb7df] to-[#854c6f]'
+                                : 'bg-[#efeded]'
+                            }`}>
+                              <div className="w-full h-full rounded-full bg-white p-[2.5px] flex items-center justify-center overflow-hidden">
+                                <img src={myAvatar} alt="My Story" className="w-full h-full rounded-full object-cover" />
+                              </div>
+                            </div>
+
+                            {/* Corner Plus badge to add another story */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAddStory();
+                              }}
+                              className="absolute bottom-0 right-0 w-5.5 h-5.5 bg-[#854c6f] hover:bg-[#6c3a59] text-white rounded-full flex items-center justify-center border-2 border-white shadow-md transition-colors z-10"
+                            >
+                              <Plus className="w-3 h-3 stroke-[3]" />
+                            </button>
+                          </div>
+                          <span className="text-[9.5px] font-extrabold text-slate-700 group-hover:text-slate-900 transition-colors truncate w-16">
+                            My Story
+                          </span>
+                        </div>
+                      );
+                    } else {
+                      // User has no active story
+                      return (
+                        <div
+                          key="mobile-add-story"
+                          onClick={handleAddStory}
+                          className="flex-shrink-0 flex flex-col items-center gap-2.5 cursor-pointer text-center group"
+                        >
+                          <div className="relative">
+                            <div className="w-20 h-20 rounded-full p-[3px] shadow-sm flex items-center justify-center transition-transform group-hover:scale-105 duration-250 bg-slate-200 group-hover:bg-gradient-to-tr group-hover:from-[#854c6f] group-hover:via-[#feb7df] group-hover:to-[#854c6f]">
+                              <div className="w-full h-full rounded-full bg-white p-[2.5px] flex items-center justify-center overflow-hidden">
+                                <img src={myAvatar} alt="Add Story" className="w-full h-full rounded-full object-cover opacity-85 group-hover:opacity-100 transition-opacity" />
+                              </div>
+                            </div>
+
+                            {/* Overlay plus icon */}
+                            <div className="absolute bottom-0 right-0 w-5.5 h-5.5 bg-[#854c6f] text-white rounded-full flex items-center justify-center border-2 border-white shadow-md z-10">
+                              <Plus className="w-3 h-3 stroke-[3]" />
+                            </div>
+                          </div>
+                          <span className="text-[9.5px] font-extrabold text-slate-500 group-hover:text-[#854c6f] transition-colors truncate w-16">
+                            My Story
+                          </span>
+                        </div>
+                      );
+                    }
+                  } catch (e) { return null; }
+                })()}
+
+                {/* 2. Other creators' stories list */}
+                {(stories || []).filter(s => s && s.creatorId !== 'me').map((story) => {
+                  const originalIdx = (stories || []).findIndex(s => s && s.id === story.id);
+                  const isUnviewed = story.id && !(viewedStoryIds || []).includes(story.id);
+                  return (
+                    <div
+                      key={story.id}
+                      onClick={() => {
+                        if (originalIdx >= 0) {
+                          setActiveStoryIdx(originalIdx);
+                          if (isUnviewed && story.id) {
+                            setViewedStoryIds(prev => [...(prev || []), story.id]);
+                          }
+                        }
+                      }}
+                      className="flex-shrink-0 flex flex-col items-center gap-2.5 cursor-pointer text-center group"
+                    >
+                      <div className="relative">
+                        <div className={`w-20 h-20 rounded-full p-[3px] shadow-sm flex items-center justify-center transition-transform group-hover:scale-105 duration-250 ${
+                          isUnviewed
+                            ? 'bg-gradient-to-tr from-[#854c6f] via-[#feb7df] to-[#854c6f]'
+                            : 'bg-[#efeded]'
+                        }`}>
+                          <div className="w-full h-full rounded-full bg-white p-[2.5px] flex items-center justify-center overflow-hidden">
+                            <img src={story.creatorAvatar} alt="" className="w-full h-full rounded-full object-cover" />
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-[9.5px] font-extrabold text-slate-700 group-hover:text-slate-900 transition-colors truncate w-16">
+                        {(story.creatorName || '').split(' ')[0]}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Stories feed block content list */}
+              <div className="space-y-4">
+                {(creators || []).map((creator, idx) => {
+                  if (!creator) return null;
+                  const story = getStoryForCreator(creator.id);
+                  return (
+                    <React.Fragment key={creator.id}>
+                      <CreatorFeedCard
+                        creator={creator}
+                        story={story}
+                        storyStatus={getStoryStatus(creator.id)}
+                        isGuest={isGuest}
+                        onNavigateToLogin={onNavigateToLogin}
+                        isSaved={savedCreatorIds.includes(creator.id)}
+                        onToggleSave={() => handleToggleBookmark(creator.id)}
+                        onSelectCreator={(c) => {
+                          setSelectedProfileCreator(c);
+                          setSelectedProfileStory(story);
+                        }}
+                        onMessageInterest={(c) => {
+                          if (isGuest) {
+                            if (onNavigateToLogin) onNavigateToLogin();
+                          } else {
+                            handleMatchCreated(c);
+                          }
+                        }}
+                      />
+                      {(idx + 1) % 3 === 0 && (
+                        <AdPlacement placement="home_feed" format="inline-card" adIndex={idx} />
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+
+            </motion.div>
+          )}
+
+          {/* B. Stories Tab */}
+          {activeTab === 'stories' && (
+            <motion.div
+              key="mobile-stories-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="absolute inset-0 pb-16 flex flex-col overflow-hidden bg-[#fbf9f9]"
+              style={{
+                paddingTop: 'calc(70px + env(safe-area-inset-top, 0px))'
+              }}
+            >
+              <StoriesFeedScreen
+                onSelectCreator={setSelectedMapCreator}
+                onOpenChat={(authorUid) => setActiveTab('chat')}
+              />
+            </motion.div>
+          )}
+
+          {/* B. Discover (Map + Swipe selectable) */}
+          {activeTab === 'discover' && (
+            <motion.div
+              key="mobile-discover-tab"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 pb-[calc(80px+env(safe-area-inset-bottom,0px))] pt-0 flex flex-col justify-between"
+            >
+
+              {/* Map View Satellites radar or swipe cards */}
+              {discoverMode === 'map' ? (
+                <div className="flex-1 w-full relative flex items-center justify-center overflow-hidden">
+
+                  {/* Subtle map rings layout */}
+                  <div className="absolute inset-0 z-0 opacity-40 mix-blend-multiply grayscale-[0.3]" style={{
+                    backgroundImage: 'radial-gradient(#1b1c1c 0.75px, transparent 0.75px), radial-gradient(#1b1c1c 0.75px, #fbf9f9 0.75px)',
+                    backgroundSize: '24px 24px',
+                    backgroundPosition: '0 0, 12px 12px'
+                  }} />
+
+                  <div className="absolute w-72 h-72 bg-[#854c6f]/5 rounded-full pointer-events-none" />
+                  <div className="absolute w-44 h-44 bg-[#854c6f]/10 rounded-full animate-pulse pointer-events-none" />
+
+                  {/* User center avatar */}
+                  <div className="relative w-16 h-16 bg-white p-0.5 rounded-full shadow-xl z-10">
+                    <img className="w-full h-full rounded-full object-cover" src={isGuest ? getDefaultAvatar() : getUserAvatar(userProfile)} alt="" />
+                  </div>
+
+                  {/* Satellite placements */}
+                  <div className="absolute inset-0 z-20 pointer-events-none flex items-center justify-center">
+                    <AnimatePresence>
+                      {getActiveMapCreators().map((creator, idx) => {
+                        const angles = [45, 160, 290];
+                        const radius = 95;
+                        const rad = (angles[idx] * Math.PI) / 180;
+                        const topOffset = Math.sin(rad) * radius;
+                        const leftOffset = Math.cos(rad) * radius;
+
+                        return (
+                          <motion.button
+                            key={creator.id}
+                            initial={{ opacity: 0, scale: 0.5, y: topOffset + 15, x: leftOffset }}
+                            animate={{ opacity: 1, scale: 1, y: topOffset, x: leftOffset }}
+                            exit={{ opacity: 0, scale: 0.5, y: topOffset - 15, x: leftOffset }}
+                            transition={{ duration: 0.5 }}
+                            onClick={() => {
+                              setSelectedMapCreator(creator);
+                            }}
+                            style={{ transform: `translate(${leftOffset}px, ${topOffset}px)` }}
+                            className="absolute w-12 h-12 bg-white p-0.5 rounded-full shadow-lg border border-slate-100 cursor-pointer z-20 flex items-center justify-center pointer-events-auto"
+                          >
+                            <img src={creator.avatar} alt="" className="w-full h-full rounded-full object-cover animate-none" />
+                          </motion.button>
+                        );
+                      })}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Map helper / details overlay panel */}
+                  <div className="absolute bottom-4 inset-x-4 z-20 pointer-events-auto">
+                    <AnimatePresence mode="wait">
+                      {selectedMapCreator ? (
+                        <motion.div
+                          key={`mobile-map-detail-${selectedMapCreator.id}`}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 20 }}
+                          className="bg-white border border-[#efeded] p-4 rounded-3xl shadow-lg text-left relative overflow-hidden"
+                        >
+                          <button
+                            onClick={() => setSelectedMapCreator(null)}
+                            className="absolute top-3.5 right-3.5 w-6 h-6 bg-slate-50 text-slate-500 hover:text-black rounded-full flex items-center justify-center border cursor-pointer z-30"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+
+                          <div className="flex items-center gap-3.5 mb-3">
+                            <img src={selectedMapCreator.avatar} alt="" className="w-12 h-12 rounded-2xl object-cover border border-[#efeded]" />
+                            <div>
+                              <h4 className="font-black text-[13px] text-[#1b1c1c] tracking-tight">{selectedMapCreator.name}</h4>
+                              <p className="text-[10px] text-slate-500 font-extrabold uppercase tracking-wide">{selectedMapCreator.specialty} • {selectedMapCreator.distance}</p>
+                            </div>
+                          </div>
+
+                          <p className="text-[11px] text-[#444748] font-semibold italic mb-4 leading-relaxed bg-[#fbf9f9] p-2.5 rounded-2xl border border-dashed border-[#efeded]">
+                            "{selectedMapCreator.activeProject}"
+                          </p>
+
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                if (isGuest) {
+                                  if (onNavigateToLogin) onNavigateToLogin();
+                                } else {
+                                  handleMatchCreated(selectedMapCreator);
+                                  setSelectedMapCreator(null);
+                                }
+                              }}
+                              className="flex-1 h-10 bg-gradient-to-r from-[#854c6f] to-[#1b1c1c] text-white rounded-full font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                            >
+                              Connect Now 🤝
+                            </button>
+                            <button
+                              onClick={() => {
+                                setDiscoverMode('swipe');
+                                setSelectedMapCreator(null);
+                              }}
+                              className="px-4 h-10 bg-[#efeded]/70 hover:bg-[#efeded] text-[#1b1c1c] rounded-full font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                            >
+                              Cards
+                            </button>
+                          </div>
+                        </motion.div>
+                      ) : (
+                        <motion.div
+                          key="mobile-map-info"
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 10 }}
+                          className="bg-white/85 backdrop-blur-[24px] border border-[#efeded] p-5 rounded-3xl shadow-lg text-center flex flex-col items-center"
+                        >
+                          <p className="font-sans text-[12.5px] text-[#444748] font-bold leading-relaxed max-w-[280px] mb-3.5">
+                            Discover creative partners active in Tribeca right now. Tap a nearby avatar to connect.
+                          </p>
+                          <button
+                            onClick={() => {
+                              setDiscoverMode('swipe');
+                              setSwipedCount(0);
+                            }}
+                            className="w-full h-11 bg-black text-white rounded-full font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                          >
+                            Go to Swipe Deck <Compass className="w-4 h-4 text-[#feb7df]" />
+                          </button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                </div>
+              ) : (
+                <div className="flex-1 w-full h-full relative overflow-hidden">
+                  <SwipeCards
+                    creators={creators}
+                    chats={chats}
+                    stories={stories}
+                    isGuest={isGuest}
+                    onNavigateToLogin={onNavigateToLogin}
+                    onMatchCreated={handleMatchCreated}
+                    onBlockUser={handleBlockUser}
+                    onReportUser={handleReportUser}
+                    onOpenReportModal={handleOpenReportModal}
+                    onCardSwiped={handleCardSwiped}
+                    onChatShortcut={handleChatShortcut}
+                    onStoryShortcut={handleStoryShortcut}
+                    savedCreatorIds={savedCreatorIds}
+                    onToggleBookmark={handleToggleBookmark}
+                    onToggleFollow={handleToggleFollow}
+                    outgoingFollows={outgoingFollows}
+                    onSelectCreator={setSelectedProfileCreator}
+                  />
+                </div>
+              )}
+
+            </motion.div>
+          )}
+
+          {/* C. Chat (Direct & Groups) */}
+          {activeTab === 'chat' && (
+            <motion.div
+              key="mobile-chat-tab"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className={`absolute inset-0 ${isKeyboardOpen || isChatConversationOpen ? 'pb-0 pt-0' : 'pb-16 pt-0'}`}
+            >
+              <ErrorBoundary fallback={
+                <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-white border border-[#efeded] rounded-3xl">
+                  <span className="text-2xl">💬</span>
+                  <h4 className="text-sm font-black text-slate-800 mt-3 mb-1">Chat Window Error</h4>
+                  <p className="text-[11px] text-slate-400 font-bold mb-4">An error occurred loading the message history. Try refreshing the chat module.</p>
+                  <button onClick={() => window.location.reload()} className="px-4 py-1.5 bg-[#1b1c1c] text-[#df1111] rounded-full text-[10px] font-black uppercase tracking-wider cursor-pointer">
+                    Retry Chat
+                  </button>
+                </div>
+              }>
+                <ChatWindow 
+                  initialChats={chats}
+                  creators={creators}
+                  isGuest={isGuest}
+                  onNavigateToLogin={onNavigateToLogin}
+                  onBlockUser={handleBlockUser}
+                  onReportUser={handleReportUser}
+                  onOpenReportModal={handleOpenReportModal}
+                  activeChatId={activeChatId}
+                  onActiveChatChange={setOpenChatId}
+                  onSelectCreator={setSelectedProfileCreator}
+                  stories={stories}
+                  onBackToMap={() => setActiveTab('home')}
+                  onViewStory={(idx) => {
+                    setActiveStoryIdx(idx);
+                    const story = stories[idx];
+                    if (story && !viewedStoryIds.includes(story.id)) {
+                      setViewedStoryIds(prev => [...prev, story.id]);
+                    }
+                  }}
+                  uploadingStory={uploadingStory}
+                  onRetryStoryUpload={() => {
+                    if (uploadingStory) {
+                      handlePublishStory(uploadingStory.thumbnail, uploadingStory.caption, uploadingStory.audience);
+                    }
+                  }}
+                />
+              </ErrorBoundary>
+            </motion.div>
+          )}
+
+          {/* D. Profile (Portfolio details & paywalls) */}
+          {activeTab === 'profile' && (
+            <motion.div
+              key="mobile-profile-tab"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 pb-16"
+              style={{
+                paddingTop: 'calc(70px + env(safe-area-inset-top, 0px))'
+              }}
+            >
+              <ProfileTab 
+                profile={userProfile}
+                chats={chats}
+                creators={creators}
+                isGuest={isGuest}
+                onUpdateProfile={setUserProfile}
+                onNavigateToLogin={onNavigateToLogin}
+                onNavigateToTab={handleNavigateToTab}
+                savedCreatorIds={savedCreatorIds}
+                onToggleBookmark={handleToggleBookmark}
+                onUnblockUser={handleUnblockUser}
+                initialSubTab={profileSubTab}
+              />
+            </motion.div>
+          )}
+
+          {/* New User "Start Your Earning" Prompt Banner / Card */}
+          <AnimatePresence>
+            {showStartEarningPrompt && currentUser && !isGuest && (
+              <motion.div
+                initial={{ opacity: 0, y: 50, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 50, scale: 0.9 }}
+                className="fixed bottom-20 left-4 right-4 sm:left-auto sm:right-6 sm:w-96 z-[300] bg-[#141414] border border-[#E5FF3B]/40 p-4 rounded-2xl shadow-2xl flex flex-col gap-3 text-white backdrop-blur-md"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-[#E5FF3B]/10 border border-[#E5FF3B]/30 text-[#E5FF3B] flex items-center justify-center font-black text-lg shrink-0">
+                      💰
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                        Start Your Earning! <Sparkles className="w-3.5 h-3.5 text-[#E5FF3B]" />
+                      </h4>
+                      <p className="text-[11px] font-medium text-[#B5B5B5] leading-snug mt-0.5">
+                        Monetize your profile & earn payouts on Anvio Talk.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowStartEarningPrompt(false);
+                      localStorage.setItem('anviotalk_seen_earning_prompt', 'true');
+                    }}
+                    className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+                    title="Close prompt"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowStartEarningPrompt(false);
+                    localStorage.setItem('anviotalk_seen_earning_prompt', 'true');
+                    setProfileSubTab('monetization');
+                    setActiveTab('profile');
+                  }}
+                  className="w-full py-2.5 bg-[#E5FF3B] text-black font-extrabold text-xs rounded-xl hover:bg-[#E5FF3B]/90 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                >
+                  <span>View Eligibility & Start Earning</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* E. Notifications Tab (Mobile) */}
+          {activeTab === 'notifications' && (
+            <motion.div
+              key="mobile-notifications-tab"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 pb-16"
+              style={{
+                paddingTop: 'calc(70px + env(safe-area-inset-top, 0px))'
+              }}
+            >
+              <NotificationsTab
+                notifications={notifications}
+                onNavigateToCreator={(creatorId) => {
+                  const creator = creators.find(c => c.id === creatorId);
+                  if (creator) {
+                    setSelectedProfileCreator(creator);
+                  }
+                }}
+                onDeleteNotification={handleDeleteNotification}
+                onLaunchStory={handleLaunchStory}
+              />
+            </motion.div>
+          )}
+
+          {/* F. Search Tab (Mobile) */}
+          {activeTab === 'search' && (
+            <motion.div
+              key="mobile-search-tab"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 pb-16"
+              style={{
+                paddingTop: 'calc(70px + env(safe-area-inset-top, 0px))'
+              }}
+            >
+              <ErrorBoundary>
+                <SearchScreen
+                  onSelectCreator={(creator) => {
+                    setSelectedProfileCreator(creator);
+                  }}
+                />
+              </ErrorBoundary>
+            </motion.div>
+          )}
+
+        </AnimatePresence>
+      </main>
+
+      {/* ==================== BOTTOM TAB MENU BAR (MOBILE) ==================== */}
+      {!isChatConversationOpen && (
+        <nav
+          className="fixed bottom-0 left-0 w-full flex justify-around items-center px-4 bg-[#0A0A0A]/95 backdrop-blur-xl border-t border-[#2A2A2A] z-40 flex-shrink-0"
+          style={isKeyboardOpen && typeof window !== 'undefined' ? {
+            position: 'fixed',
+            top: `${window.innerHeight - 60}px`,
+            bottom: 'auto',
+            left: 0,
+            right: 0,
+            zIndex: 30
+          } : {
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            height: 'calc(64px + env(safe-area-inset-bottom, 0px))',
+            minHeight: 'calc(64px + env(safe-area-inset-bottom, 0px))'
+          }}
+        >
+
+          <button
+            onClick={() => setActiveTab('home')}
+            className={`flex flex-col items-center justify-center p-1.5 transition-all outline-none focus:outline-none cursor-pointer ${
+              activeTab === 'home' ? 'text-[#E5FF3B] font-extrabold scale-105' : 'text-[#8A8A8A] hover:text-white'
+            }`}
+          >
+            <Globe className="w-5 h-5" />
+            <span className="text-[10px] font-bold mt-1">Home</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('discover')}
+            className={`flex flex-col items-center justify-center p-1.5 transition-all outline-none focus:outline-none cursor-pointer ${
+              activeTab === 'discover' ? 'text-[#E5FF3B] font-extrabold scale-105' : 'text-[#8A8A8A] hover:text-white'
+            }`}
+          >
+            <Compass className="w-5 h-5" />
+            <span className="text-[10px] font-bold mt-1">Discover</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('stories')}
+            className={`flex flex-col items-center justify-center p-1.5 transition-all outline-none focus:outline-none cursor-pointer ${
+              activeTab === 'stories' ? 'text-[#E5FF3B] font-extrabold scale-105' : 'text-[#8A8A8A] hover:text-white'
+            }`}
+          >
+            <Film className="w-5 h-5" />
+            <span className="text-[10px] font-bold mt-1">Stories</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('chat')}
+            className={`flex flex-col items-center justify-center p-1.5 transition-all outline-none focus:outline-none cursor-pointer ${
+              activeTab === 'chat' ? 'text-[#E5FF3B] font-extrabold scale-105' : 'text-[#8A8A8A] hover:text-white'
+            }`}
+          >
+            <MessageSquare className="w-5 h-5" />
+            <span className="text-[10px] font-bold mt-1">Chat</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('profile')}
+            className={`flex flex-col items-center justify-center p-1.5 transition-all outline-none focus:outline-none cursor-pointer ${
+              activeTab === 'profile' ? 'text-[#E5FF3B] font-extrabold scale-105' : 'text-[#8A8A8A] hover:text-white'
+            }`}
+          >
+            <div className={`w-5.5 h-5.5 rounded-full overflow-hidden border ${
+              activeTab === 'profile' ? 'border-[#E5FF3B] ring-2 ring-[#E5FF3B]/30' : 'border-[#2A2A2A]'
+            }`}>
+              <img src={isGuest ? getDefaultAvatar() : getUserAvatar(userProfile)} alt="" className="w-full h-full object-cover" />
+            </div>
+            <span className="text-[10px] font-bold mt-1">Profile</span>
+          </button>
+
+        </nav>
+      )}
+
+      {/* Slideout notifications checklist overlay drawer (Mobile) */}
+      <AnimatePresence>
+        {showNotificationsList && (
+          <div
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowNotificationsList(false);
+            }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end"
+          >
+            <motion.div
+              initial={{ y: 200 }}
+              animate={{ y: 0 }}
+              exit={{ y: 200 }}
+              className="w-full bg-white rounded-t-[2.5rem] max-h-[75vh] p-6 flex flex-col"
+            >
+              <div className="flex items-center justify-between border-b pb-4 mb-4">
+                <h4 className="font-extrabold text-sm flex items-center gap-1.5"><Bell className="w-4 h-4 text-[#854c6f]" /> Notifications</h4>
+                <button
+                  onClick={() => setShowNotificationsList(false)}
+                  className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar">
+                {notifications.map(notif => (
+                  <div key={notif.id} className="flex gap-3 text-left relative">
+                    {!notif.isRead && <span className="absolute left-0 top-3.5 w-1.5 h-1.5 bg-[#854c6f] rounded-full" />}
+                    {notif.avatar && (
+                      <img src={notif.avatar} alt="" className="w-9 h-9 rounded-full object-cover border" />
+                    )}
+                    <div>
+                      <p className="text-xs font-bold">{notif.title}</p>
+                      <p className="text-[11px] text-[#444748] mt-0.5">{notif.description}</p>
+                      <span className="text-[9px] text-slate-400 font-semibold block mt-1">{notif.timestamp}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Floating toast message alert */}
+      <AnimatePresence>
+        {showNotificationToast && (
+          <motion.div
+            initial={{ y: 50, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 50, opacity: 0 }}
+            className="fixed bottom-18 left-4 right-4 z-50 bg-white/95 backdrop-blur-md p-3.5 rounded-2xl flex items-center gap-3 shadow-lg border-l-4 border-[#854c6f] border border-slate-100 text-left"
+          >
+            <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-200 shrink-0">
+              <img className="w-full h-full object-cover" src={toastMessage.avatar} alt="" />
+            </div>
+            <div className="flex-1 min-w-0 text-left">
+              <p className="text-[12px] text-black font-extrabold leading-tight truncate">{toastMessage.title}</p>
+              <p className="text-[10px] text-[#444748] font-semibold truncate">{toastMessage.desc}</p>
+            </div>
+            <button onClick={() => setShowNotificationToast(false)} className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-black/5">
+              <X className="w-3.5 h-3.5 text-[#444748]" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Full screen Story Viewer */}
+      {activeStoryIdx !== null && (
+        <StoryViewer
+          stories={stories}
+          initialStoryIndex={activeStoryIdx}
+          onClose={() => setActiveStoryIdx(null)}
+          onAddView={(storyId) => {
+            if (!viewedStoryIds.includes(storyId)) {
+              setViewedStoryIds(prev => [...prev, storyId]);
+            }
+          }}
+          onDeleteStory={handleDeleteStory}
+          onOpenReportModal={handleOpenReportModal}
+        />
+      )}
+
+      {/* Profile Detail Popup Modal */}
+      <AnimatePresence>
+        {selectedProfileCreator && (
+          <ProfileDetailPopup 
+            creator={selectedProfileCreator}
+            chats={chats}
+            creators={creators}
+            story={selectedProfileStory}
+            isGuest={isGuest}
+            outgoingStatus={outgoingFollows[selectedProfileCreator.id]}
+            incomingStatus={incomingFollows[selectedProfileCreator.id]}
+            onToggleFollow={handleToggleFollow}
+            onBlockUser={handleBlockUser}
+            onUnblockUser={handleUnblockUser}
+            onOpenReportModal={handleOpenReportModal}
+            onClose={() => {
+              setSelectedProfileCreator(null);
+              setSelectedProfileStory(undefined);
+            }}
+            onNavigateToLogin={onNavigateToLogin || (() => {})}
+            onConnect={handleMatchCreated}
+            onLaunchStory={() => {
+              const story = getStoryForCreator(selectedProfileCreator.id);
+              const idx = story ? stories.findIndex(s => s.id === story.id) : -1;
+              if (idx >= 0) {
+                setActiveStoryIdx(idx);
+                setSelectedProfileCreator(null);
+                setSelectedProfileStory(undefined);
+              }
+            }}
+            onNavigateToTab={handleNavigateToTab}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Global Safety & Content Reporting Modal */}
+      <ReportModal
+        isOpen={isReportModalOpen}
+        target={reportTarget}
+        onClose={() => {
+          setIsReportModalOpen(false);
+          setReportTarget(null);
+        }}
+        onBlockUser={handleBlockUser}
+      />
+
+      {/* Hidden file input for Story */}
+      <input
+        type="file"
+        ref={storyInputRef}
+        onChange={handlePhotoUploadAttempt}
+        accept="image/*"
+        className="hidden"
+      />
+
+      {/* Create Story Modal */}
+      <CreateStoryModal
+        isOpen={storyModalOpen}
+        imageSrc={storyModalSrc}
+        onCancel={() => {
+          setStoryModalOpen(false);
+        }}
+        onSave={handlePublishStory}
+      />
+
+    </div>
+  );
+}

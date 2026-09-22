@@ -1,0 +1,19 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+service-account.json
+*serviceAccount*.json
+scripts/*.json
+.freebuff/
+.idea/
+temp_*.txt
+sw (3).js
+dist/
+android/app/*.jks
+*.jks
+key.properties

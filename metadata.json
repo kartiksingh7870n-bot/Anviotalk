@@ -1,0 +1,6 @@
+{
+  "name": "AnvioTalk",
+  "description": "A responsive, production-ready dating app for creative connections, featuring immersive onboarding, secure login, and an interactive circles discovery map.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
