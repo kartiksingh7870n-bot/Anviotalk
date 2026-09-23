@@ -621,7 +621,7 @@ $('loginBtn').addEventListener('click', async () => {
       // First-time: fetch QR via setup endpoint
       const sRes = await fetch(API_BASE + '/api/admin/auth/2fa/setup', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tempToken })
+        body: JSON.stringify({ tempToken: temp2FaToken })
       });
       const sData = await sRes.json().catch(() => ({}));
       if (!sRes.ok || !sData.success) {
@@ -649,7 +649,7 @@ async function verify2Fa(code, errEl, btn) {
   try {
     const res = await fetch(API_BASE + '/api/admin/auth/2fa', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tempToken, code })
+      body: JSON.stringify({ tempToken: temp2FaToken, code })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.success) {
