@@ -23,3 +23,11 @@ dist/
 android/app/*.jks
 *.jks
 key.properties
+
+# Worker local dev secrets (never commit)
+.dev.vars
+worker/node_modules/
+worker/package-lock.json
+temp_test_*.png
+.wrangler/
+worker/package.json

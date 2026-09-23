@@ -536,7 +536,11 @@ function toast(msg) {
   setTimeout(() => t.classList.remove('show'), 4200);
 }
 
+let lastApiActivity = Date.now();
+// ---- API helper (auto idles: server + client share the 30-min sliding window) ----
+
 async function api(path, options = {}) {
+  lastApiActivity = Date.now(); // API activity = session alive (server sliding window)
   const res = await fetch(API_BASE + path, {
     ...options,
     headers: {
@@ -728,29 +732,18 @@ async function forceLogout(reason) {
 
 $('logoutBtn').addEventListener('click', () => forceLogout('Signed out.'));
 
-// ============ 30-MIN IDLE AUTO-LOGOUT (server enforces too) ============
+// ============ 30-MIN IDLE AUTO-LOGOUT (based on API activity, like the server) ============
 const IDLE_LIMIT_MS = 30 * 60 * 1000;
 const IDLE_WARN_MS = 29 * 60 * 1000;
-let lastActivity = Date.now();
-let idleWarned = false;
 
-['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(ev =>
-  document.addEventListener(ev, () => {
-    if (Date.now() - lastActivity > 60 * 1000 && authToken) { /* activity jump: nothing extra needed */ }
-    lastActivity = Date.now();
-    if (idleWarned) { idleWarned = false; $('idleWarn').style.display = 'none'; }
-  }, { passive: true })
-);
-
-function resetIdle() { lastActivity = Date.now(); idleWarned = false; $('idleWarn').style.display = 'none'; }
+function resetIdle() { lastApiActivity = Date.now(); $('idleWarn').style.display = 'none'; }
 
 setInterval(async () => {
   if (!authToken) return;
-  const idle = Date.now() - lastActivity;
+  const idle = Date.now() - lastApiActivity;
   if (idle >= IDLE_LIMIT_MS) {
     await forceLogout('30 minute idle — security ke liye auto-logout ho gaya.');
-  } else if (idle >= IDLE_WARN_MS && !idleWarned) {
-    idleWarned = true;
+  } else if (idle >= IDLE_WARN_MS) {
     $('idleWarn').style.display = 'block';
   }
 }, 15000);
