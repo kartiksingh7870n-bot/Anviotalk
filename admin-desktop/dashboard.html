@@ -505,12 +505,9 @@
 //   3. Web (default)       -> same-origin
 const API_BASE = (() => {
   if (window.location.protocol === 'file:') return 'http://localhost:3000';
-  const override = new URLSearchParams(window.location.search).get('api') || localStorage.getItem('AT_ADMIN_API');
-  if (override) {
-    localStorage.setItem('AT_ADMIN_API', override.replace(/\/+$/, ''));
-    return override.replace(/\/+$/, '');
-  }
-  return '';
+  // Sirf ?api= param se override (localStorage nahi — purani setting se confusion nahi hona chahiye)
+  const override = new URLSearchParams(window.location.search).get('api');
+  return override ? override.replace(/\/+$/, '') : '';
 })();
 
 firebase.initializeApp({
@@ -578,7 +575,7 @@ async function checkServer() {
     if (res.status === 401 || res.status === 405 || res.ok || res.status === 400) { el.textContent = '● Server connected'; el.className = 'ok'; return true; }
     throw new Error('down');
   } catch (e) {
-    el.textContent = '● Server offline — run start-anviotalk.bat first';
+    el.textContent = '● Server offline — page refresh karke dobara try karo';
     el.className = 'down';
     return false;
   }
@@ -637,7 +634,7 @@ $('loginBtn').addEventListener('click', async () => {
       setTimeout(() => $('setupCode').focus(), 60);
     }
   } catch (e) {
-    err.textContent = 'Server se connect nahi ho paya. start-anviotalk.bat chala kar dobara try karo.';
+    err.textContent = 'Server tak request nahi pahunchi' + (API_BASE ? ' (' + API_BASE + ')' : '') + '. Page refresh (Ctrl+Shift+R) karke dobara try karo.';
   } finally {
     $('loginBtn').disabled = false;
     $('loginBtn').textContent = 'Continue →';
@@ -668,7 +665,7 @@ async function verify2Fa(code, errEl, btn) {
     temp2FaToken = null;
     enterApp();
   } catch (e) {
-    errEl.textContent = 'Verification failed — server check karo.';
+    errEl.textContent = 'Verification failed — page refresh karke dobara try karo.';
   } finally {
     btn.disabled = false;
     btn.textContent = btn.id === 'verifyBtn' ? 'Verify & Sign In' : 'Confirm & Finish Setup';
